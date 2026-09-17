@@ -1,0 +1,47 @@
+:root {
+  color: #e9eefb;
+  background: #0b1020;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button, input { font: inherit; }
+
+.page-shell { max-width: 1000px; margin: 0 auto; padding: 76px 24px; }
+.hero { margin-bottom: 38px; }
+.eyebrow { color: #69d6bd; font-size: .74rem; font-weight: 700; letter-spacing: .13em; margin: 0 0 10px; }
+h1, h2 { margin: 0; letter-spacing: -.035em; }
+h1 { font-size: clamp(2.6rem, 7vw, 4.8rem); }
+h2 { font-size: 1.8rem; }
+.subtitle { color: #aab5cd; font-size: 1.08rem; max-width: 600px; }
+
+.panel, .results { background: #141c31; border: 1px solid #293554; border-radius: 16px; padding: 26px; }
+label { display: block; font-weight: 650; margin-bottom: 10px; }
+.url-form { display: flex; gap: 10px; }
+input { background: #0b1020; border: 1px solid #3a486a; border-radius: 9px; color: inherit; flex: 1; min-width: 0; padding: 12px 14px; }
+input:focus { border-color: #69d6bd; outline: 2px solid #69d6bd44; }
+button { background: #69d6bd; border: 0; border-radius: 9px; color: #071411; cursor: pointer; font-weight: 750; padding: 12px 16px; }
+button:disabled { cursor: wait; opacity: .65; }
+.secondary { background: transparent; border: 1px solid #3a486a; color: #c8d1e5; white-space: nowrap; }
+.error { color: #ffabb5; margin: 16px 0 0; }
+
+.results { margin-top: 24px; }
+.results-heading { align-items: center; display: flex; justify-content: space-between; gap: 16px; }
+.notice { color: #eec675; font-size: .9rem; }
+.stats { display: grid; gap: 12px; grid-template-columns: repeat(3, 1fr); margin: 26px 0; }
+.stats div { background: #0e1528; border-radius: 10px; padding: 18px; }
+.stats strong { display: block; font-size: 1.7rem; }
+.stats span, .file-heading p { color: #aab5cd; font-size: .9rem; }
+.file-list { display: grid; gap: 12px; }
+.file-card { background: #0e1528; border: 1px solid #293554; border-radius: 10px; padding: 17px; }
+.file-heading { align-items: center; display: flex; gap: 14px; justify-content: space-between; }
+.file-heading code { color: #80d8ff; overflow-wrap: anywhere; }
+.file-heading p { margin: 6px 0 0; }
+pre { background: #060a14; border-radius: 8px; margin: 16px 0 0; max-height: 420px; overflow: auto; padding: 15px; white-space: pre-wrap; }
+
+@media (max-width: 640px) {
+  .page-shell { padding: 45px 16px; }
+  .url-form, .results-heading, .file-heading { align-items: stretch; flex-direction: column; }
+  .stats { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,1 @@
+"""RepoPilot FastAPI application package."""
