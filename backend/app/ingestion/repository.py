@@ -10,6 +10,9 @@ from urllib.parse import urlparse
 
 from git import GitCommandError, Repo
 
+from app.code.chunker import create_chunks
+from app.code.parser import parse_source
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 REPOSITORIES_DIR = PROJECT_ROOT / "data" / "repositories"
@@ -194,7 +197,7 @@ def scan_repository(repository_path: Path) -> tuple[list[dict[str, object]], int
 
 
 def analyze_repository(github_url: str) -> dict[str, object]:
-    """Clone/open a repository and return extracted Day 1 file metadata."""
+    """Clone/open a repository and return extracted files plus Day 2 chunks."""
     reference, repository_path = clone_or_open_repository(github_url)
     files, unreadable_files, has_non_ignored_file = scan_repository(repository_path)
     if not has_non_ignored_file:
@@ -204,11 +207,31 @@ def analyze_repository(github_url: str) -> dict[str, object]:
 
     documentation_extensions = {".md"}
     documentation_files = sum(file["extension"] in documentation_extensions for file in files)
+    chunks: list[dict[str, object]] = []
+    parsing_failures: list[dict[str, str]] = []
+    parsed_files = 0
+    for file in files:
+        language = str(file["language"])
+        if language not in {"Python", "JavaScript", "JavaScript (React JSX)", "Java"}:
+            continue
+        try:
+            parsed = parse_source(str(file["content"]), language)
+            if parsed["errors"]:
+                parsing_failures.append({"path": str(file["path"]), "reason": "parse error"})
+                continue
+            parsed_files += 1
+            chunks.extend(create_chunks(str(file["content"]), str(file["path"]), language, parsed))
+        except Exception as error:  # A parser failure must not stop repository ingestion.
+            parsing_failures.append({"path": str(file["path"]), "reason": str(error)})
     return {
         "repository": reference.name,
         "files_found": len(files),
         "code_files": len(files) - documentation_files,
         "documentation_files": documentation_files,
         "skipped_unreadable_files": unreadable_files,
+        "parsed_files": parsed_files,
+        "chunks_created": len(chunks),
+        "parsing_failures": parsing_failures,
+        "chunks": chunks,
         "files": files,
     }
