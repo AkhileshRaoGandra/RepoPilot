@@ -12,10 +12,17 @@ from git import GitCommandError, Repo
 
 from app.code.chunker import create_chunks
 from app.code.parser import parse_source
+from app.embeddings import EmbeddingService
+from app.vectorstore import QdrantStore
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 REPOSITORIES_DIR = PROJECT_ROOT / "data" / "repositories"
+
+# This object is cheap to create. It loads BGE-M3 lazily on the first embedding
+# request, then reuses that model for later repository analyses in this process.
+embedding_service = EmbeddingService()
+vector_store = QdrantStore(path=PROJECT_ROOT / "data" / "qdrant")
 
 SUPPORTED_EXTENSIONS = {
     ".py": "Python",
@@ -197,7 +204,7 @@ def scan_repository(repository_path: Path) -> tuple[list[dict[str, object]], int
 
 
 def analyze_repository(github_url: str) -> dict[str, object]:
-    """Clone/open a repository and return extracted files plus Day 2 chunks."""
+    """Clone/open a repository and return extracted files plus embedded code chunks."""
     reference, repository_path = clone_or_open_repository(github_url)
     files, unreadable_files, has_non_ignored_file = scan_repository(repository_path)
     if not has_non_ignored_file:
@@ -223,6 +230,9 @@ def analyze_repository(github_url: str) -> dict[str, object]:
             chunks.extend(create_chunks(str(file["content"]), str(file["path"]), language, parsed))
         except Exception as error:  # A parser failure must not stop repository ingestion.
             parsing_failures.append({"path": str(file["path"]), "reason": str(error)})
+
+    embedded_chunks = embedding_service.embed_chunks(chunks)
+    stored_point_ids = vector_store.upsert_chunks(embedded_chunks)
     return {
         "repository": reference.name,
         "files_found": len(files),
@@ -231,7 +241,8 @@ def analyze_repository(github_url: str) -> dict[str, object]:
         "skipped_unreadable_files": unreadable_files,
         "parsed_files": parsed_files,
         "chunks_created": len(chunks),
+        "chunks_stored": len(stored_point_ids),
         "parsing_failures": parsing_failures,
-        "chunks": chunks,
+        "chunks": embedded_chunks,
         "files": files,
     }

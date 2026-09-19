@@ -1,4 +1,4 @@
-"""FastAPI entry point for RepoPilot's Day 1 and Day 2 ingestion API."""
+"""FastAPI entry point for RepoPilot's repository ingestion and embedding API."""
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +13,7 @@ from app.ingestion.repository import (
     analyze_repository,
 )
 
-app = FastAPI(title="RepoPilot", version="0.2.0", description="Repository ingestion and code-aware chunking API")
+app = FastAPI(title="RepoPilot", version="0.4.0", description="Repository ingestion, embeddings, and Qdrant vector storage API")
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"https?://(localhost|127\.0\.0\.1):\d+",
