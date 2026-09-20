@@ -1,4 +1,10 @@
-"""FastAPI entry point for RepoPilot's repository ingestion, embedding, and RAG query API."""
+import sys
+from pathlib import Path
+
+# Ensure backend directory is in sys.path regardless of execution working directory
+_BACKEND_DIR = str(Path(__file__).resolve().parents[1])
+if _BACKEND_DIR not in sys.path:
+    sys.path.insert(0, _BACKEND_DIR)
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +20,7 @@ from app.ingestion.repository import (
 )
 from app.rag import get_rag_service, get_retriever
 
+
 app = FastAPI(
     title="RepoPilot",
     version="0.5.0",
@@ -23,8 +30,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"https?://(localhost|127\.0\.0\.1):\d+",
     allow_credentials=False,
-    allow_methods=["POST"],
-    allow_headers=["Content-Type"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

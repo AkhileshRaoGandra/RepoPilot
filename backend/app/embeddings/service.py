@@ -33,6 +33,7 @@ class EmbeddingService:
     @staticmethod
     def _default_model_factory(model_name: str) -> Any:
         """Import lazily so code paths that do not embed need no model startup."""
+        import os
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as error:
@@ -40,7 +41,9 @@ class EmbeddingService:
                 "sentence-transformers is required for embeddings. "
                 "Install backend/requirements.txt first."
             ) from error
-        return SentenceTransformer(model_name)
+        token = os.getenv("HF_TOKEN") or False
+        return SentenceTransformer(model_name, token=token)
+
 
     @property
     def model(self) -> Any:
