@@ -105,3 +105,17 @@ class EmbeddingService:
                 }
             )
         return embedded_chunks
+
+    def embed_query(self, query: str) -> list[float]:
+        """Generate a normalized dense embedding vector for a natural language query."""
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError("Query must be a non-empty string.")
+
+        vectors = self.model.encode(
+            [query.strip()],
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        return [float(value) for value in vectors[0]]
+

@@ -83,3 +83,19 @@ def test_metadata_is_preserved_without_sharing_mutable_state(service: EmbeddingS
     assert result[0]["content"] == chunk["content"]
     assert result[0]["metadata"] == chunk["metadata"]
     assert result[0]["metadata"] is not chunk["metadata"]
+
+
+def test_embed_query_generates_vector(service: EmbeddingService, fake_model: FakeEmbeddingModel) -> None:
+    vector = service.embed_query("How does authentication work?")
+
+    assert vector == [0.0, 1.0, 2.0]
+    assert len(fake_model.calls) == 1
+    assert fake_model.calls[0]["sentences"] == ["How does authentication work?"]
+
+
+def test_embed_query_validates_input(service: EmbeddingService) -> None:
+    with pytest.raises(ValueError, match="non-empty string"):
+        service.embed_query("   ")
+    with pytest.raises(ValueError, match="non-empty string"):
+        service.embed_query("")
+

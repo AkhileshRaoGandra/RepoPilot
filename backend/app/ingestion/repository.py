@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -22,7 +23,19 @@ REPOSITORIES_DIR = PROJECT_ROOT / "data" / "repositories"
 # This object is cheap to create. It loads BGE-M3 lazily on the first embedding
 # request, then reuses that model for later repository analyses in this process.
 embedding_service = EmbeddingService()
-vector_store = QdrantStore(path=PROJECT_ROOT / "data" / "qdrant")
+
+
+@lru_cache
+def get_vector_store() -> QdrantStore:
+    """Create the local Qdrant client only when chunks need to be persisted."""
+    return QdrantStore(path=PROJECT_ROOT / "data" / "qdrant")
+
+
+def __getattr__(name: str) -> Any:
+    if name == "vector_store":
+        return get_vector_store()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 SUPPORTED_EXTENSIONS = {
     ".py": "Python",
@@ -232,7 +245,7 @@ def analyze_repository(github_url: str) -> dict[str, object]:
             parsing_failures.append({"path": str(file["path"]), "reason": str(error)})
 
     embedded_chunks = embedding_service.embed_chunks(chunks)
-    stored_point_ids = vector_store.upsert_chunks(embedded_chunks)
+    stored_point_ids = get_vector_store().upsert_chunks(embedded_chunks)
     return {
         "repository": reference.name,
         "files_found": len(files),

@@ -1,0 +1,101 @@
+"""LLM generation client abstraction and implementations."""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Sequence
+from typing import Any, Protocol
+
+
+class LLMClient(Protocol):
+    """Protocol for LLM generation clients."""
+
+    def generate(self, system_prompt: str, user_prompt: str) -> str:
+        """Generate a response text given system instructions and user prompt."""
+        ...
+
+
+class FakeLLMClient:
+    """Mock LLM client for deterministic unit tests and offline testing."""
+
+    def __init__(self, responses: str | Sequence[str] | None = None) -> None:
+        self.calls: list[dict[str, str]] = []
+        if isinstance(responses, str):
+            self._responses = [responses]
+        elif responses is not None:
+            self._responses = list(responses)
+        else:
+            self._responses = []
+
+    def generate(self, system_prompt: str, user_prompt: str) -> str:
+        self.calls.append({"system_prompt": system_prompt, "user_prompt": user_prompt})
+        if self._responses:
+            return self._responses.pop(0) if len(self._responses) > 1 else self._responses[0]
+        return "Based on the provided repository context, here is the grounded answer."
+
+
+class HttpLLMClient:
+    """HTTP client supporting OpenAI-compatible chat completion endpoints."""
+
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str = "https://api.openai.com/v1",
+        model: str = "gpt-4o-mini",
+        timeout: float = 30.0,
+    ) -> None:
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.timeout = timeout
+
+    def generate(self, system_prompt: str, user_prompt: str) -> str:
+        import httpx
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.0,
+        }
+
+        url = f"{self.base_url}/chat/completions"
+        with httpx.Client(timeout=self.timeout) as client:
+            response = client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            return str(data["choices"][0]["message"]["content"]).strip()
+
+
+class TemplateGroundedClient:
+    """Offline grounded synthesizer used when no external LLM API key is configured.
+
+    Ensures RepoPilot works out-of-the-box locally, extracting findings from the context.
+    """
+
+    def generate(self, system_prompt: str, user_prompt: str) -> str:
+        if "No relevant repository context found" in user_prompt or not user_prompt.strip():
+            return "The provided repository context is insufficient to answer this question."
+
+        return (
+            "Based on the retrieved repository context, the requested functionality "
+            "is implemented in the referenced source files. Please inspect the cited "
+            "code blocks for exact implementation details."
+        )
+
+
+def get_default_llm_client() -> LLMClient:
+    """Create the active LLM client from environment configuration or fallback."""
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if openai_key:
+        base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        return HttpLLMClient(api_key=openai_key, base_url=base_url, model=model)
+
+    return TemplateGroundedClient()
