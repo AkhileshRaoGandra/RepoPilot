@@ -102,6 +102,32 @@ button:disabled { cursor: wait; opacity: .6; }
   font-size: .92rem;
 }
 
+/* Loading Banner */
+.loading-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: #111a30;
+  border: 1px solid #29385c;
+  border-left: 4px solid #69d6bd;
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin-top: 18px;
+}
+.spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid #233152;
+  border-top-color: #69d6bd;
+  border-radius: 50%;
+  animation: rp-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes rp-spin {
+  to { transform: rotate(360deg); }
+}
+
+
 /* Sample prompt chips */
 .suggestions {
   display: flex;

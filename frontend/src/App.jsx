@@ -37,7 +37,7 @@ function FileCard({ file }) {
       <div className="file-heading">
         <div>
           <code>{file.path}</code>
-          <p>{file.language} · {file.lines} lines · {file.size.toLocaleString()} bytes</p>
+          <p>{file.language || "Unknown"} · {file.lines ?? 0} lines · {(file.size ?? 0).toLocaleString()} bytes</p>
         </div>
         <button className="secondary" onClick={() => setExpanded((val) => !val)}>
           {expanded ? "Hide content" : "View content"}
@@ -311,6 +311,17 @@ export default function App() {
                 </button>
               </div>
             </form>
+            {ingestLoading && (
+              <div className="loading-banner">
+                <div className="spinner" />
+                <div>
+                  <strong>Cloning, parsing, and embedding repository...</strong>
+                  <p style={{ margin: "4px 0 0", color: "#aab5cd", fontSize: "0.85rem" }}>
+                    BGE-M3 is generating 1024-dimensional dense vectors and Qdrant is indexing chunks. This typically takes 20–40 seconds on CPU.
+                  </p>
+                </div>
+              </div>
+            )}
             {ingestError && <p className="error" role="alert">{ingestError}</p>}
           </div>
 
