@@ -18,13 +18,14 @@ from app.ingestion.repository import (
     UnsupportedFilesError,
     analyze_repository,
 )
+from app.agent import get_agent_service
 from app.rag import get_rag_service, get_retriever
 
 
 app = FastAPI(
     title="RepoPilot",
-    version="0.5.0",
-    description="Repository ingestion, embeddings, Qdrant vector storage, and RAG question answering API",
+    version="0.6.0",
+    description="Repository ingestion, embeddings, Qdrant vector storage, RAG, and LangGraph agentic orchestration API",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -75,4 +76,15 @@ def retrieve_chunks(request: QueryRequest) -> dict[str, object]:
         return {"query": request.query, "chunks": chunks}
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/agent/query")
+def agent_query(request: QueryRequest) -> dict[str, object]:
+    """Execute LangGraph agentic repository investigation with tool orchestration."""
+    try:
+        agent_service = get_agent_service()
+        return agent_service.run_investigation(query=request.query, top_k=request.top_k)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
 

@@ -60,6 +60,7 @@ export default function App() {
   // RAG Query State
   const [question, setQuestion] = useState("");
   const [topK, setTopK] = useState(5);
+  const [queryMode, setQueryMode] = useState("agent");
   const [queryResult, setQueryResult] = useState(null);
   const [queryError, setQueryError] = useState("");
   const [queryLoading, setQueryLoading] = useState(false);
@@ -69,7 +70,7 @@ export default function App() {
     "Where is authentication implemented?",
     "How does token generation work?",
     "What classes and methods are in the codebase?",
-    "How are repository files ingested and scanned?",
+    "Inspect surrounding lines around login in auth/service.py",
   ];
 
   async function handleIngestSubmit(event) {
@@ -104,15 +105,17 @@ export default function App() {
     setQueryError("");
     setQueryResult(null);
 
+    const endpoint = queryMode === "agent" ? `${API_BASE}/agent/query` : `${API_BASE}/query`;
+
     try {
-      const response = await fetch(`${API_BASE}/query`, {
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: question.trim(), top_k: Number(topK) }),
       });
       const payload = await response.json();
       if (!response.ok) {
-        throw new Error(payload.detail || "RAG query failed.");
+        throw new Error(payload.detail || "Query failed.");
       }
       setQueryResult(payload);
     } catch (err) {
@@ -125,11 +128,11 @@ export default function App() {
   return (
     <main className="page-shell">
       <header className="hero">
-        <p className="eyebrow">DAY 5 · RAG & GROUNDED REPOSITORY INTELLIGENCE</p>
+        <p className="eyebrow">DAY 6 · LANGGRAPH AGENTIC ORCHESTRATION</p>
         <h1>RepoPilot</h1>
         <p className="subtitle">
-          AI-powered repository understanding system. Ingest codebases, create code-aware chunks,
-          generate BGE-M3 embeddings, and ask grounded questions with source evidence.
+          AI-powered repository understanding system. Ingest codebases, index semantic vectors in Qdrant,
+          and use LangGraph agentic orchestration with tool investigation to produce grounded answers.
         </p>
       </header>
 
@@ -186,6 +189,24 @@ export default function App() {
                     <option value={10}>10 chunks</option>
                   </select>
                 </label>
+
+                <div className="query-mode-selector">
+                  <span style={{ fontSize: "0.85rem", color: "#aab5cd" }}>Mode:</span>
+                  <button
+                    type="button"
+                    className={`mode-btn ${queryMode === "agent" ? "active" : ""}`}
+                    onClick={() => setQueryMode("agent")}
+                  >
+                    Agentic RAG (/agent/query)
+                  </button>
+                  <button
+                    type="button"
+                    className={`mode-btn ${queryMode === "rag" ? "active" : ""}`}
+                    onClick={() => setQueryMode("rag")}
+                  >
+                    Standard RAG (/query)
+                  </button>
+                </div>
               </div>
             </form>
 
@@ -211,15 +232,32 @@ export default function App() {
             <section className="results" aria-live="polite">
               <div className="results-heading">
                 <div>
-                  <p className="eyebrow">ANSWER GROUNDED IN REPOSITORY</p>
+                  <p className="eyebrow">
+                    {queryMode === "agent" ? "LANGGRAPH AGENT INVESTIGATION" : "ANSWER GROUNDED IN REPOSITORY"}
+                  </p>
                   <h2>Question: &ldquo;{queryResult.question}&rdquo;</h2>
                 </div>
               </div>
+
+              {queryResult.tools_used && queryResult.tools_used.length > 0 && (
+                <div className="tools-used-bar">
+                  <span className="tools-label">Agent Tools Invoked:</span>
+                  {queryResult.tools_used.map((tool, idx) => (
+                    <span key={idx} className="tool-badge">
+                      {tool === "semantic_search" ? "🔍 semantic_search" : "📄 " + tool}
+                    </span>
+                  ))}
+                  {queryResult.investigation_status && (
+                    <span className="status-badge">status: {queryResult.investigation_status}</span>
+                  )}
+                </div>
+              )}
 
               <div className="answer-box">
                 <h3>Grounded Answer</h3>
                 <div className="answer-content">{queryResult.answer}</div>
               </div>
+
 
               {queryResult.evidence && queryResult.evidence.length > 0 && (
                 <div className="evidence-section">
