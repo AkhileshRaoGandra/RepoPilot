@@ -271,6 +271,31 @@ def test_gemini_llm_client_generate(monkeypatch: pytest.MonkeyPatch) -> None:
     assert answer == "Gemini generated answer based on context."
 
 
+def test_gemini_llm_client_timeout_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    class TimeoutHttpClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> TimeoutHttpClient:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def post(self, url: str, **kwargs: object) -> None:
+            import httpx
+            raise httpx.ReadTimeout("The read operation timed out")
+
+    import httpx
+    monkeypatch.setattr(httpx, "Client", TimeoutHttpClient)
+
+    client = GeminiLLMClient(api_key="test-key", model="gemini-flash-lite-latest")
+    user_prompt = "Repository Context:\nFile: auth.py\ndef login(): pass\n\nQuestion: where is login?"
+    answer = client.generate("system prompt", user_prompt)
+    assert "retrieved repository context" in answer
+    assert "timed out" in answer
+
+
 # 7. Source Metadata Preservation & Evidence Formatting Tests
 def test_extract_evidence_preserves_metadata() -> None:
     chunks = [

@@ -76,6 +76,17 @@ IGNORED_DIRECTORIES = {
     ".next",
     "coverage",
 }
+IGNORED_FILE_NAMES = {
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "composer.lock",
+    "cargo.lock",
+    "poetry.lock",
+    "pipfile.lock",
+}
+MAX_FILE_SIZE_BYTES = 500 * 1024  # Skip individual files > 500 KB to avoid freezing memory
+MAX_CHUNKS_PER_REPO = 500         # Embed up to 500 chunks so CPU embedding completes in <30 seconds
 SENSITIVE_FILE_NAMES = {".env"}
 SENSITIVE_SUFFIXES = {".pem", ".key", ".crt"}
 
@@ -147,6 +158,8 @@ def is_sensitive_file(path: Path) -> bool:
 
 
 def is_supported_file(path: Path) -> bool:
+    if path.name.lower() in IGNORED_FILE_NAMES:
+        return False
     return path.suffix.lower() in SUPPORTED_EXTENSIONS and not is_sensitive_file(path)
 
 
@@ -166,7 +179,15 @@ def clone_or_open_repository(github_url: str, repositories_dir: Path = REPOSITOR
         raise CloneFailedError(f"Local path exists but is not a Git repository: {destination.name}")
 
     try:
-        Repo.clone_from(github_url, destination)
+        print(f"[Ingestion] Cloning {github_url} (shallow clone depth=1)...")
+        Repo.clone_from(
+            github_url,
+            destination,
+            depth=1,
+            single_branch=True,
+            env={"GIT_TERMINAL_PROMPT": "0"},
+        )
+        print(f"[Ingestion] Successfully cloned into {destination.name}")
     except GitCommandError as error:
         if destination.exists():
             shutil.rmtree(destination, ignore_errors=True)
@@ -184,8 +205,11 @@ def clone_or_open_repository(github_url: str, repositories_dir: Path = REPOSITOR
 
 
 def extract_file_metadata(repository_path: Path, file_path: Path) -> dict[str, object] | None:
-    """Read a supported UTF-8 file, returning None when it cannot be decoded."""
+    """Read a supported UTF-8 file, returning None when it cannot be decoded or exceeds max size."""
     try:
+        file_size = file_path.stat().st_size
+        if file_size > MAX_FILE_SIZE_BYTES:
+            return None
         content = file_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
@@ -259,10 +283,31 @@ def analyze_repository(github_url: str) -> dict[str, object]:
             parsing_failures.append({"path": str(file["path"]), "reason": str(error)})
 
     # Build the dependency graph from parsed AST data
+    print(f"[Ingestion] Building dependency graph for {len(files)} files...")
     _dependency_graph = build_graph(files, parsed_results)
 
+    # Cap chunks to prevent CPU embedding from taking 10+ minutes on large repos
+    total_chunks_created = len(chunks)
+    if total_chunks_created > MAX_CHUNKS_PER_REPO:
+        print(f"[Ingestion] Capping chunks from {total_chunks_created} to {MAX_CHUNKS_PER_REPO} to keep embedding fast (<30s).")
+        chunks = chunks[:MAX_CHUNKS_PER_REPO]
+
+    print(f"[Ingestion] Embedding {len(chunks)} code chunks with BGE-M3...")
     embedded_chunks = embedding_service.embed_chunks(chunks)
+    print(f"[Ingestion] Upserting {len(embedded_chunks)} chunks to Qdrant...")
     stored_point_ids = get_vector_store().upsert_chunks(embedded_chunks)
+    print(f"[Ingestion] Successfully ingested repository {reference.name}!")
+
+    # Invalidate cached services so agent and RAG query immediately switch to the new repository
+    try:
+        from app.agent import get_agent_service
+        from app.rag import get_rag_service, get_retriever
+        get_agent_service.cache_clear()
+        get_rag_service.cache_clear()
+        get_retriever.cache_clear()
+    except Exception:
+        pass
+
     return {
         "repository": reference.name,
         "files_found": len(files),
@@ -270,7 +315,7 @@ def analyze_repository(github_url: str) -> dict[str, object]:
         "documentation_files": documentation_files,
         "skipped_unreadable_files": unreadable_files,
         "parsed_files": parsed_files,
-        "chunks_created": len(chunks),
+        "chunks_created": total_chunks_created,
         "chunks_stored": len(stored_point_ids),
         "graph_nodes": _dependency_graph.node_count,
         "graph_edges": _dependency_graph.edge_count,

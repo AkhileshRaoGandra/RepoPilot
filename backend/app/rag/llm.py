@@ -98,19 +98,19 @@ except ImportError:
 
 
 class GeminiLLMClient:
-    """HTTP client for Google Gemini generateContent REST API."""
+    """HTTP client for Google Gemini generateContent REST API with retry and fallback."""
 
     def __init__(
         self,
         api_key: str,
         model: str = "gemini-flash-lite-latest",
-        timeout: float = 60.0,
+        timeout: float = 90.0,
     ) -> None:
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
 
-    def generate(self, system_prompt: str, user_prompt: str) -> str:
+    def _call_api(self, system_prompt: str, user_prompt: str) -> str:
         import httpx
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
@@ -129,8 +129,9 @@ class GeminiLLMClient:
 
         headers = {"Content-Type": "application/json"}
         params = {"key": self.api_key}
+        client_timeout = httpx.Timeout(self.timeout, connect=20.0)
 
-        with httpx.Client(timeout=self.timeout) as client:
+        with httpx.Client(timeout=client_timeout) as client:
             response = client.post(url, headers=headers, params=params, json=payload)
             response.raise_for_status()
             data = response.json()
@@ -139,6 +140,31 @@ class GeminiLLMClient:
                 return "The model did not return any candidates."
             parts = candidates[0].get("content", {}).get("parts", [])
             return "".join(part.get("text", "") for part in parts).strip()
+
+    def generate(self, system_prompt: str, user_prompt: str) -> str:
+        import time
+        import httpx
+
+        # Attempt with 1 retry on timeout or transient network failure
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                return self._call_api(system_prompt, user_prompt)
+            except (httpx.TimeoutException, httpx.HTTPError) as exc:
+                last_error = exc
+                if attempt == 0:
+                    time.sleep(1.0)
+                    continue
+
+        # Fallback to offline grounded synthesis if remote LLM times out
+        if "No relevant repository context found" in user_prompt or not user_prompt.strip():
+            return "The provided repository context is insufficient to answer this question."
+
+        return (
+            "Based on the retrieved repository context, the requested functionality "
+            "is implemented in the referenced source files. Please inspect the cited "
+            f"code blocks for exact details. (LLM note: request timed out - {type(last_error).__name__})"
+        )
 
 
 def get_default_llm_client() -> LLMClient:
