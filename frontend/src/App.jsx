@@ -70,6 +70,7 @@ export default function App() {
     "Where is authentication implemented?",
     "How does token generation work?",
     "What classes and methods are in the codebase?",
+    "How does the login request reach the database?",
     "Inspect surrounding lines around login in auth/service.py",
   ];
 
@@ -128,11 +129,12 @@ export default function App() {
   return (
     <main className="page-shell">
       <header className="hero">
-        <p className="eyebrow">DAY 6 · LANGGRAPH AGENTIC ORCHESTRATION</p>
+        <p className="eyebrow">DAY 7 · DEPENDENCY GRAPH + AGENTIC INVESTIGATION</p>
         <h1>RepoPilot</h1>
         <p className="subtitle">
-          AI-powered repository understanding system. Ingest codebases, index semantic vectors in Qdrant,
-          and use LangGraph agentic orchestration with tool investigation to produce grounded answers.
+          AI-powered repository understanding system. Ingest codebases, build dependency graphs,
+          index semantic vectors in Qdrant, and use LangGraph agentic orchestration with relationship-aware
+          investigation to produce grounded answers.
         </p>
       </header>
 
@@ -244,7 +246,7 @@ export default function App() {
                   <span className="tools-label">Agent Tools Invoked:</span>
                   {queryResult.tools_used.map((tool, idx) => (
                     <span key={idx} className="tool-badge">
-                      {tool === "semantic_search" ? "🔍 semantic_search" : "📄 " + tool}
+                      {tool === "semantic_search" ? "🔍 semantic_search" : tool === "graph_investigation" ? "🔗 graph_investigation" : "📄 " + tool}
                     </span>
                   ))}
                   {queryResult.investigation_status && (
@@ -258,7 +260,51 @@ export default function App() {
                 <div className="answer-content">{queryResult.answer}</div>
               </div>
 
-
+              {queryResult.graph_investigations && queryResult.graph_investigations.length > 0 && (
+                <div className="investigation-path-section">
+                  <p className="evidence-heading">INVESTIGATION PATH</p>
+                  <div className="investigation-path">
+                    {queryResult.graph_investigations.map((inv, idx) => (
+                      <div key={idx} className="graph-result-card">
+                        {inv.file && inv.dependencies && inv.dependencies.length > 0 && (
+                          <div className="dep-chain">
+                            <code className="chain-node">{inv.file}</code>
+                            {inv.dependencies.map((dep, di) => (
+                              <div key={di} className="chain-arrow">
+                                <span className="arrow-line">↓ imports</span>
+                                <code className="chain-node">{dep}</code>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {inv.file && inv.dependents && inv.dependents.length > 0 && (
+                          <div className="dep-chain">
+                            {inv.dependents.map((dep, di) => (
+                              <div key={di} className="chain-arrow">
+                                <code className="chain-node">{dep}</code>
+                                <span className="arrow-line">↓ imports</span>
+                              </div>
+                            ))}
+                            <code className="chain-node">{inv.file}</code>
+                          </div>
+                        )}
+                        {inv.related && inv.related.length > 0 && (
+                          <div className="related-symbols">
+                            <span className="related-label">Related to "{inv.query}":</span>
+                            {inv.related.map((r, ri) => (
+                              <div key={ri} className="related-item">
+                                <code>{r.name}</code>
+                                <span className="symbol-badge">{r.type}</span>
+                                {r.file && <span style={{color: "#aab5cd", fontSize: "0.8rem"}}> in {r.file}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {queryResult.evidence && queryResult.evidence.length > 0 && (
                 <div className="evidence-section">
                   <p className="evidence-heading">SOURCE EVIDENCE CITATIONS ({queryResult.evidence.length})</p>
@@ -351,6 +397,8 @@ export default function App() {
                 <div><strong>{ingestResult.parsed_files || 0}</strong><span>parsed files</span></div>
                 <div><strong>{ingestResult.chunks_created || 0}</strong><span>chunks created</span></div>
                 <div><strong>{ingestResult.chunks_stored || 0}</strong><span>chunks in Qdrant</span></div>
+                <div><strong>{ingestResult.graph_nodes || 0}</strong><span>graph nodes</span></div>
+                <div><strong>{ingestResult.graph_edges || 0}</strong><span>graph edges</span></div>
               </div>
 
               {ingestResult.files && (

@@ -42,7 +42,7 @@ class HttpLLMClient:
         api_key: str,
         base_url: str = "https://api.openai.com/v1",
         model: str = "gpt-4o-mini",
-        timeout: float = 30.0,
+        timeout: float = 60.0,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -90,8 +90,64 @@ class TemplateGroundedClient:
         )
 
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+
+class GeminiLLMClient:
+    """HTTP client for Google Gemini generateContent REST API."""
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gemini-flash-lite-latest",
+        timeout: float = 60.0,
+    ) -> None:
+        self.api_key = api_key
+        self.model = model
+        self.timeout = timeout
+
+    def generate(self, system_prompt: str, user_prompt: str) -> str:
+        import httpx
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        payload: dict[str, Any] = {
+            "contents": [
+                {"role": "user", "parts": [{"text": user_prompt}]}
+            ],
+            "generationConfig": {
+                "temperature": 0.0,
+            },
+        }
+        if system_prompt:
+            payload["system_instruction"] = {
+                "parts": [{"text": system_prompt}]
+            }
+
+        headers = {"Content-Type": "application/json"}
+        params = {"key": self.api_key}
+
+        with httpx.Client(timeout=self.timeout) as client:
+            response = client.post(url, headers=headers, params=params, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            candidates = data.get("candidates", [])
+            if not candidates:
+                return "The model did not return any candidates."
+            parts = candidates[0].get("content", {}).get("parts", [])
+            return "".join(part.get("text", "") for part in parts).strip()
+
+
 def get_default_llm_client() -> LLMClient:
     """Create the active LLM client from environment configuration or fallback."""
+    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if gemini_key:
+        model = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
+        return GeminiLLMClient(api_key=gemini_key, model=model)
+
     openai_key = os.getenv("OPENAI_API_KEY")
     if openai_key:
         base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")

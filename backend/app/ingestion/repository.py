@@ -14,6 +14,7 @@ from git import GitCommandError, Repo
 from app.code.chunker import create_chunks
 from app.code.parser import parse_source
 from app.embeddings import EmbeddingService
+from app.graph.builder import DependencyGraph, build_graph
 from app.vectorstore import QdrantStore
 
 
@@ -29,6 +30,15 @@ embedding_service = EmbeddingService()
 def get_vector_store() -> QdrantStore:
     """Create the local Qdrant client only when chunks need to be persisted."""
     return QdrantStore(path=PROJECT_ROOT / "data" / "qdrant")
+
+
+# Module-level dependency graph, populated during analyse_repository().
+_dependency_graph: DependencyGraph | None = None
+
+
+def get_dependency_graph() -> DependencyGraph | None:
+    """Return the most recently built dependency graph (or None)."""
+    return _dependency_graph
 
 
 def __getattr__(name: str) -> Any:
@@ -218,6 +228,8 @@ def scan_repository(repository_path: Path) -> tuple[list[dict[str, object]], int
 
 def analyze_repository(github_url: str) -> dict[str, object]:
     """Clone/open a repository and return extracted files plus embedded code chunks."""
+    global _dependency_graph
+
     reference, repository_path = clone_or_open_repository(github_url)
     files, unreadable_files, has_non_ignored_file = scan_repository(repository_path)
     if not has_non_ignored_file:
@@ -230,6 +242,7 @@ def analyze_repository(github_url: str) -> dict[str, object]:
     chunks: list[dict[str, object]] = []
     parsing_failures: list[dict[str, str]] = []
     parsed_files = 0
+    parsed_results: dict[str, dict[str, object]] = {}
     for file in files:
         language = str(file["language"])
         if language not in {"Python", "JavaScript", "JavaScript (React JSX)", "Java"}:
@@ -240,9 +253,13 @@ def analyze_repository(github_url: str) -> dict[str, object]:
                 parsing_failures.append({"path": str(file["path"]), "reason": "parse error"})
                 continue
             parsed_files += 1
+            parsed_results[str(file["path"])] = parsed
             chunks.extend(create_chunks(str(file["content"]), str(file["path"]), language, parsed))
         except Exception as error:  # A parser failure must not stop repository ingestion.
             parsing_failures.append({"path": str(file["path"]), "reason": str(error)})
+
+    # Build the dependency graph from parsed AST data
+    _dependency_graph = build_graph(files, parsed_results)
 
     embedded_chunks = embedding_service.embed_chunks(chunks)
     stored_point_ids = get_vector_store().upsert_chunks(embedded_chunks)
@@ -255,6 +272,8 @@ def analyze_repository(github_url: str) -> dict[str, object]:
         "parsed_files": parsed_files,
         "chunks_created": len(chunks),
         "chunks_stored": len(stored_point_ids),
+        "graph_nodes": _dependency_graph.node_count,
+        "graph_edges": _dependency_graph.edge_count,
         "parsing_failures": parsing_failures,
         "chunks": embedded_chunks,
         "files": files,

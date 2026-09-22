@@ -17,6 +17,7 @@ from app.ingestion.repository import (
     RepositoryNotFoundError,
     UnsupportedFilesError,
     analyze_repository,
+    get_dependency_graph,
 )
 from app.agent import get_agent_service
 from app.rag import get_rag_service, get_retriever
@@ -24,8 +25,8 @@ from app.rag import get_rag_service, get_retriever
 
 app = FastAPI(
     title="RepoPilot",
-    version="0.6.0",
-    description="Repository ingestion, embeddings, Qdrant vector storage, RAG, and LangGraph agentic orchestration API",
+    version="0.7.0",
+    description="Repository ingestion, embeddings, Qdrant vector storage, dependency graph, RAG, and LangGraph agentic orchestration API",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -57,6 +58,18 @@ def analyze(request: RepositoryAnalyzeRequest) -> dict[str, object]:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
+@app.get("/repository/graph")
+def repository_graph() -> dict[str, object]:
+    """Return the current dependency graph as nodes and edges for debugging."""
+    graph = get_dependency_graph()
+    if graph is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No dependency graph available. Ingest a repository first.",
+        )
+    return graph.to_dict()
+
+
 @app.post("/query")
 def query_repository(request: QueryRequest) -> dict[str, object]:
     """Retrieve relevant chunks and generate a grounded answer with citations."""
@@ -86,5 +99,3 @@ def agent_query(request: QueryRequest) -> dict[str, object]:
         return agent_service.run_investigation(query=request.query, top_k=request.top_k)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-
-

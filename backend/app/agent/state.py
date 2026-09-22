@@ -14,7 +14,9 @@ class AgentState(TypedDict, total=False):
     evidence: list[dict[str, Any]]
     tools_used: list[str]
     source_inspections: list[dict[str, Any]]
+    graph_investigations: list[dict[str, Any]]
     needs_more_investigation: bool
+    needs_graph_investigation: bool
     target_inspection: dict[str, Any] | None
     investigation_status: str
     answer: str

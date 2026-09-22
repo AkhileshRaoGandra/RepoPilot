@@ -12,6 +12,7 @@ from app.main import app
 from app.rag import (
     DEFAULT_SYSTEM_PROMPT,
     FakeLLMClient,
+    GeminiLLMClient,
     RAGService,
     Retriever,
     TemplateGroundedClient,
@@ -20,6 +21,7 @@ from app.rag import (
     format_citation,
     format_lines_range,
     format_symbol_name,
+    get_default_llm_client,
 )
 from app.vectorstore import QdrantStore
 
@@ -219,6 +221,54 @@ def test_template_client_reports_insufficient_context() -> None:
     client = TemplateGroundedClient()
     response = client.generate(DEFAULT_SYSTEM_PROMPT, "Repository Context:\nNo relevant repository context found.\n")
     assert "insufficient" in response.lower()
+
+
+def test_get_default_llm_client_selects_gemini(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    client = get_default_llm_client()
+    assert isinstance(client, GeminiLLMClient)
+    assert client.api_key == "test-gemini-key"
+    assert client.model == "gemini-flash-lite-latest"
+
+
+def test_gemini_llm_client_generate(monkeypatch: pytest.MonkeyPatch) -> None:
+    class MockResponse:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict:
+            return {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [{"text": "Gemini generated answer based on context."}]
+                        }
+                    }
+                ]
+            }
+
+    class MockHttpClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> MockHttpClient:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def post(self, url: str, **kwargs: object) -> MockResponse:
+            assert "generativelanguage.googleapis.com" in url
+            return MockResponse()
+
+    import httpx
+    monkeypatch.setattr(httpx, "Client", MockHttpClient)
+
+    client = GeminiLLMClient(api_key="test-key", model="gemini-1.5-flash")
+    answer = client.generate("system prompt", "user prompt")
+    assert answer == "Gemini generated answer based on context."
 
 
 # 7. Source Metadata Preservation & Evidence Formatting Tests

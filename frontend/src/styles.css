@@ -319,6 +319,31 @@ pre code { color: #d0daf0; }
   margin-left: auto;
 }
 
+/* Investigation Path (Day 7 Graph) */
+.investigation-path-section { margin-top: 20px; }
+.investigation-path { display: flex; flex-direction: column; gap: 12px; }
+.graph-result-card {
+  background: #0f1729;
+  border: 1px solid #293554;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.dep-chain { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.chain-node {
+  background: #19233f;
+  border: 1px solid #3b4970;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.85rem;
+  color: #80d8ff;
+}
+.chain-arrow { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding-left: 18px; }
+.arrow-line { color: #69d6bd; font-size: 0.78rem; font-weight: 600; letter-spacing: .04em; }
+.related-symbols { display: flex; flex-direction: column; gap: 5px; }
+.related-label { color: #aab5cd; font-size: 0.83rem; font-weight: 600; }
+.related-item { display: flex; align-items: center; gap: 8px; padding-left: 12px; }
+.related-item code { color: #80d8ff; font-size: 0.85rem; }
+
 @media (max-width: 680px) {
   .page-shell { padding: 35px 16px; }
   .url-form, .query-form, .results-heading, .file-heading, .evidence-header {

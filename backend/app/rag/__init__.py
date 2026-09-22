@@ -15,6 +15,7 @@ from app.rag.context import (
 )
 from app.rag.llm import (
     FakeLLMClient,
+    GeminiLLMClient,
     HttpLLMClient,
     LLMClient,
     TemplateGroundedClient,
@@ -40,6 +41,7 @@ def get_rag_service() -> RAGService:
 __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
     "FakeLLMClient",
+    "GeminiLLMClient",
     "HttpLLMClient",
     "LLMClient",
     "RAGService",
