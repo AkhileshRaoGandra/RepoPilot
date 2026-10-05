@@ -155,8 +155,8 @@ def _resolve_import(import_str: str, file_index: dict[str, str], source_file: st
         target = file_index[slash_form]
         return target if target != source_file else None
 
-    # JS-style relative path resolution
-    if import_str.startswith("."):
+    # JS-style relative path resolution (e.g. `./auth/service`, `../db`)
+    if import_str.startswith(("./", "../")):
         source_dir = os.path.dirname(_normalise_path(source_file))
         candidate = os.path.normpath(os.path.join(source_dir, import_str)).replace("\\", "/")
         # Try with common extensions
@@ -164,6 +164,27 @@ def _resolve_import(import_str: str, file_index: dict[str, str], source_file: st
             key = candidate + ext
             if key in file_index:
                 target = file_index[key]
+                return target if target != source_file else None
+
+    # Python-style relative imports (e.g. `.service`, `..utils.helper`, `.service.AuthService`)
+    if import_str.startswith(".") and not import_str.startswith(("./", "../")):
+        num_dots = len(import_str) - len(import_str.lstrip("."))
+        rel_path = import_str[num_dots:]
+        source_dir = os.path.dirname(_normalise_path(source_file))
+        for _ in range(num_dots - 1):
+            source_dir = os.path.dirname(source_dir)
+
+        rel_slash = rel_path.replace(".", "/")
+        candidate = os.path.normpath(os.path.join(source_dir, rel_slash)).replace("\\", "/")
+        if candidate in file_index:
+            target = file_index[candidate]
+            return target if target != source_file else None
+
+        if "." in rel_path:
+            parent_rel, _ = rel_path.rsplit(".", 1)
+            parent_candidate = os.path.normpath(os.path.join(source_dir, parent_rel.replace(".", "/"))).replace("\\", "/")
+            if parent_candidate in file_index:
+                target = file_index[parent_candidate]
                 return target if target != source_file else None
 
     # Try truncating rightmost segment (e.g. `app.auth.service.AuthService` → `app.auth.service`)

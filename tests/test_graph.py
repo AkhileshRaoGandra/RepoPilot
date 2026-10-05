@@ -202,6 +202,29 @@ class TestGraphConstruction:
         assert "app/db/repository.py" in deps
         assert "app/utils.py" in deps
 
+    def test_python_relative_imports_create_edges(self):
+        file_a = {
+            "path": "pkg/auth/service.py",
+            "language": "Python",
+            "content": "from .repo import UserRepo\nfrom ..common import helper\n",
+        }
+        file_b = {
+            "path": "pkg/auth/repo.py",
+            "language": "Python",
+            "content": "class UserRepo:\n    pass\n",
+        }
+        file_c = {
+            "path": "pkg/common.py",
+            "language": "Python",
+            "content": "def helper():\n    pass\n",
+        }
+        files = [file_a, file_b, file_c]
+        parsed = _parse_all(files)
+        graph = build_graph(files, parsed)
+        deps = get_dependencies(graph, "pkg/auth/service.py")
+        assert "pkg/auth/repo.py" in deps
+        assert "pkg/common.py" in deps
+
     def test_controller_imports_service(self):
         parsed = _parse_all(ALL_FILES)
         graph = build_graph(ALL_FILES, parsed)
