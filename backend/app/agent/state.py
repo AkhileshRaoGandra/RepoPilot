@@ -18,6 +18,7 @@ class AgentState(TypedDict, total=False):
     needs_more_investigation: bool
     needs_graph_investigation: bool
     target_inspection: dict[str, Any] | None
+    pending_inspections: list[dict[str, Any]]
     investigation_status: str
     answer: str
     iteration: int

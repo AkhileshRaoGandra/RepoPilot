@@ -301,11 +301,11 @@ Open `http://localhost:5173` in your browser.
 
 ## Running Automated Tests
 
-Run the full suite of **92 unit and pipeline tests**:
+Run the full suite of **96 unit and pipeline tests**:
 ```powershell
 pytest
 ```
-- `test_graph.py`: 40 tests verifying dependency graph construction, queries, tool wrapper, agent integration, and API endpoint
+- `test_graph.py`: 44 tests verifying dependency graph construction, queries, tool wrapper, end-to-end multi-file agent integration, and API endpoint
 - `test_agent.py`: 9 tests verifying LangGraph execution, tool routing, and grounding
 - `test_rag.py`: 16 tests verifying Day 5 retrieval, evidence, and grounded generation
 - `test_embeddings.py`: 8 tests verifying BGE-M3 query and chunk encoding

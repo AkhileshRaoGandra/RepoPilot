@@ -696,3 +696,230 @@ class TestGraphAPI:
             assert data["stats"]["total_nodes"] > 0
         finally:
             main_module.get_dependency_graph = original
+
+
+# ════════════════════════════════════════════════════════════════════════
+# SECTION 6: END-TO-END MULTI-FILE GRAPH INVESTIGATION TESTS
+# ════════════════════════════════════════════════════════════════════════
+
+SMALL_REPO_CONTROLLER = {
+    "path": "src/controller.py",
+    "language": "Python",
+    "extension": ".py",
+    "size": 220,
+    "lines": 12,
+    "content": (
+        "from src.service import UserService\n\n"
+        "class UserController:\n"
+        "    def __init__(self):\n"
+        "        self.service = UserService()\n\n"
+        "    def handle_request(self, user_id: str):\n"
+        "        return self.service.get_user(user_id)\n"
+    ),
+}
+
+SMALL_REPO_SERVICE = {
+    "path": "src/service.py",
+    "language": "Python",
+    "extension": ".py",
+    "size": 220,
+    "lines": 12,
+    "content": (
+        "from src.repository import UserRepository\n\n"
+        "class UserService:\n"
+        "    def __init__(self):\n"
+        "        self.repo = UserRepository()\n\n"
+        "    def get_user(self, user_id: str):\n"
+        "        return self.repo.find_user(user_id)\n"
+    ),
+}
+
+SMALL_REPO_REPOSITORY = {
+    "path": "src/repository.py",
+    "language": "Python",
+    "extension": ".py",
+    "size": 180,
+    "lines": 8,
+    "content": (
+        "class UserRepository:\n"
+        "    def find_user(self, user_id: str):\n"
+        "        return {'id': user_id, 'name': 'Alice'}\n"
+    ),
+}
+
+SMALL_REPO_FILES = [SMALL_REPO_CONTROLLER, SMALL_REPO_SERVICE, SMALL_REPO_REPOSITORY]
+
+
+class TestEndToEndGraphAgentInvestigation:
+    """Verify that the repository dependency graph is genuinely integrated with LangGraph end to end."""
+
+    @pytest.fixture
+    def small_repo_dir(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "test-owner--small-repo"
+        for f in SMALL_REPO_FILES:
+            file_path = repo / f["path"]
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(str(f["content"]), encoding="utf-8")
+        return tmp_path
+
+    @pytest.fixture
+    def small_repo_graph(self) -> DependencyGraph:
+        parsed = _parse_all(SMALL_REPO_FILES)
+        return build_graph(SMALL_REPO_FILES, parsed)
+
+    @pytest.fixture
+    def small_repo_vector_store(self) -> QdrantStore:
+        controller_chunk = {
+            "content": (
+                "class UserController:\n"
+                "    def handle_request(self, user_id: str):\n"
+                "        return self.service.get_user(user_id)\n"
+            ),
+            "metadata": {
+                "file": "src/controller.py",
+                "language": "Python",
+                "type": "class",
+                "name": "UserController",
+                "start_line": 3,
+                "end_line": 8,
+            },
+            "embedding": [0.95, 0.05, 0.0],
+        }
+        store = QdrantStore(collection_name="test_small_repo", client=QdrantClient(path=":memory:"))
+        store.upsert_chunks([controller_chunk])
+        return store
+
+    def test_end_to_end_controller_service_repository_investigation(
+        self, small_repo_dir, small_repo_graph, small_repo_vector_store, embedding_service
+    ):
+        """Test full trace: User query -> Semantic search (controller.py) -> Graph (service.py -> repository.py)
+        -> Source inspection -> Evidence-backed grounded answer.
+        """
+        # Verify graph topology directly first
+        assert "src/service.py" in get_dependencies(small_repo_graph, "src/controller.py")
+        assert "src/repository.py" in get_dependencies(small_repo_graph, "src/service.py")
+
+        inspection_tool = SourceInspectionTool(base_dir=small_repo_dir)
+        graph_tool = DependencyGraphTool(graph=small_repo_graph)
+        retriever = Retriever(embedding_service=embedding_service, vector_store=small_repo_vector_store)
+
+        fake_llm = FakeLLMClient(
+            responses=(
+                "A request starts at UserController.handle_request() in src/controller.py:3-8, "
+                "which calls UserService.get_user() in src/service.py:3-8, "
+                "which retrieves the user via UserRepository.find_user() in src/repository.py:1-8."
+            )
+        )
+
+        agent = AgentService(
+            retriever=retriever,
+            inspection_tool=inspection_tool,
+            graph_tool=graph_tool,
+            llm_client=fake_llm,
+        )
+
+        question = "How does a request move from the controller to the repository layer?"
+        result = agent.run_investigation(question, top_k=1)
+
+        # 1. Semantic search was executed
+        assert "semantic_search" in result["tools_used"]
+
+        # 2. Graph tool was invoked through the agent
+        assert "graph_investigation" in result["tools_used"]
+
+        # 3. Graph results reached agent state
+        assert len(result["graph_investigations"]) > 0
+
+        # 4. Related files discovered via the graph
+        discovered_deps = []
+        for g_res in result["graph_investigations"]:
+            discovered_deps.extend(g_res.get("dependencies", []))
+        assert "src/service.py" in discovered_deps
+        assert "src/repository.py" in discovered_deps
+
+        # 5. Source inspection was invoked on discovered files
+        assert "source_inspection" in result["tools_used"]
+        inspected_files = [item["file"] for item in result["source_inspections"] if item.get("found")]
+        assert "src/service.py" in inspected_files
+        assert "src/repository.py" in inspected_files
+
+        # 6. Evidence from multiple files appears in the final response
+        evidence_files = {e["file"] for e in result["evidence"]}
+        assert "src/controller.py" in evidence_files
+        assert "src/service.py" in evidence_files
+        assert "src/repository.py" in evidence_files
+
+        # 7. Final answer received context from multiple files
+        assert fake_llm.calls
+        user_prompt = fake_llm.calls[0]["user_prompt"]
+        assert "src/controller.py" in user_prompt
+        assert "src/service.py" in user_prompt
+        assert "src/repository.py" in user_prompt
+        assert result["investigation_status"] == "completed"
+        assert len(result["answer"]) > 0
+
+    def test_handling_nonexistent_files_and_relationships(self, small_repo_graph):
+        """Graph queries on missing files return empty lists and do not invent relationships."""
+        assert get_dependencies(small_repo_graph, "src/nonexistent.py") == []
+        assert get_dependents(small_repo_graph, "src/nonexistent.py") == []
+        assert get_neighbors(small_repo_graph, "src/nonexistent.py") == []
+        assert get_related_symbols(small_repo_graph, "UnknownSymbolXYZ") == []
+
+        tool = DependencyGraphTool(graph=small_repo_graph)
+        res = tool.find_dependencies("src/nonexistent.py")
+        assert res["dependencies"] == []
+
+    def test_insufficient_context_no_hallucination(self, small_repo_graph, embedding_service, small_repo_dir):
+        """Empty vector store results in explicit insufficient status without calling the LLM."""
+        empty_store = QdrantStore(collection_name="test_empty_e2e", client=QdrantClient(path=":memory:"))
+        retriever = Retriever(embedding_service=embedding_service, vector_store=empty_store)
+        graph_tool = DependencyGraphTool(graph=small_repo_graph)
+        inspection_tool = SourceInspectionTool(base_dir=small_repo_dir)
+        fake_llm = FakeLLMClient(responses="Should not be called")
+
+        agent = AgentService(
+            retriever=retriever,
+            inspection_tool=inspection_tool,
+            graph_tool=graph_tool,
+            llm_client=fake_llm,
+        )
+
+        result = agent.run_investigation("How does authentication work?", top_k=1)
+        assert result["investigation_status"] == "insufficient"
+        assert result["answer"] == "The provided repository context is insufficient to answer this question."
+        assert len(fake_llm.calls) == 0
+
+    def test_agent_endpoint_full_investigation_integration(
+        self, monkeypatch: pytest.MonkeyPatch, small_repo_dir, small_repo_graph, small_repo_vector_store, embedding_service
+    ):
+        """Test FastAPI /agent/query endpoint with the multi-file graph-backed agent."""
+        client = TestClient(app)
+        inspection_tool = SourceInspectionTool(base_dir=small_repo_dir)
+        graph_tool = DependencyGraphTool(graph=small_repo_graph)
+        retriever = Retriever(embedding_service=embedding_service, vector_store=small_repo_vector_store)
+        fake_llm = FakeLLMClient(responses="Request flows controller -> service -> repository.")
+
+        agent_service = AgentService(
+            retriever=retriever,
+            inspection_tool=inspection_tool,
+            graph_tool=graph_tool,
+            llm_client=fake_llm,
+        )
+
+        monkeypatch.setattr("app.main.get_agent_service", lambda: agent_service)
+
+        response = client.post(
+            "/agent/query",
+            json={"query": "How does a request move from the controller to the repository layer?", "top_k": 1},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["question"] == "How does a request move from the controller to the repository layer?"
+        assert "graph_investigation" in data["tools_used"]
+        assert "source_inspection" in data["tools_used"]
+        assert len(data["evidence"]) >= 3
+        evidence_files = {e["file"] for e in data["evidence"]}
+        assert "src/controller.py" in evidence_files
+        assert "src/service.py" in evidence_files
+        assert "src/repository.py" in evidence_files
+

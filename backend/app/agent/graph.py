@@ -43,7 +43,8 @@ def route_evaluation(state: AgentState) -> str:
 
 def route_after_graph(state: AgentState) -> str:
     """After graph investigation, decide whether source inspection is also warranted."""
-    if state.get("needs_more_investigation", False) and state.get("iteration", 0) == 0:
+    has_targets = bool(state.get("pending_inspections")) or bool(state.get("target_inspection"))
+    if (state.get("needs_more_investigation", False) or has_targets) and state.get("iteration", 0) == 0:
         return "source_inspection"
     return "generate_answer"
 
@@ -74,6 +75,7 @@ def create_agent_graph(
             "needs_more_investigation": False,
             "needs_graph_investigation": False,
             "target_inspection": None,
+            "pending_inspections": [],
             "investigation_status": "searching",
         }
 
@@ -101,6 +103,7 @@ def create_agent_graph(
                 "needs_more_investigation": False,
                 "needs_graph_investigation": False,
                 "target_inspection": None,
+                "pending_inspections": [],
                 "investigation_status": "insufficient",
             }
 
@@ -144,6 +147,7 @@ def create_agent_graph(
             "needs_more_investigation": needs_more,
             "needs_graph_investigation": needs_graph,
             "target_inspection": target,
+            "pending_inspections": [target] if target else [],
             "investigation_status": status,
         }
 
@@ -168,15 +172,27 @@ def create_agent_graph(
                 seen_files.add(fp)
                 target_files.append(fp)
 
-        # For each top file, get dependencies and dependents
-        for fp in target_files[:3]:  # Limit to top 3 files
+        # Hop 1: For each top file, get dependencies and dependents
+        discovered_deps: list[str] = []
+        for fp in target_files[:3]:  # Limit to top 3 seed files
             deps_result = graph_tool.find_dependencies(fp)
             if deps_result.get("dependencies") or deps_result.get("symbols"):
                 graph_results.append(deps_result)
+                for dep in deps_result.get("dependencies", []):
+                    if dep not in discovered_deps:
+                        discovered_deps.append(dep)
 
             dependents_result = graph_tool.find_dependents(fp)
             if dependents_result.get("dependents"):
                 graph_results.append(dependents_result)
+
+        # Hop 2: Follow dependencies of discovered files to discover deeper chain (e.g. controller -> service -> repository)
+        for dep in discovered_deps[:3]:
+            if dep not in seen_files:
+                seen_files.add(dep)
+                sub_deps = graph_tool.find_dependencies(dep)
+                if sub_deps.get("dependencies") or sub_deps.get("symbols"):
+                    graph_results.append(sub_deps)
 
         # Also try symbol-based search using key terms from the question
         question = state.get("question", "")
@@ -207,21 +223,52 @@ def create_agent_graph(
                         "score": None,
                     })
 
+        # Queue discovered files not yet covered in retrieved chunks for source inspection
+        chunk_files = {chunk.get("metadata", {}).get("file") for chunk in chunks if chunk.get("metadata", {}).get("file")}
+        discovered_to_inspect: list[str] = []
+        for result in graph_results:
+            for dep in result.get("dependencies", []):
+                if dep and dep not in chunk_files and dep not in discovered_to_inspect:
+                    discovered_to_inspect.append(dep)
+            for rel in result.get("related", []):
+                rf = rel.get("file")
+                if rf and rf not in chunk_files and rf not in discovered_to_inspect:
+                    discovered_to_inspect.append(rf)
+
+        pending = list(state.get("pending_inspections", []))
+        if state.get("target_inspection"):
+            if not any(p.get("file") == state["target_inspection"].get("file") for p in pending):
+                pending.append(state["target_inspection"])
+
+        for df in discovered_to_inspect[:3]:
+            if not any(p.get("file") == df for p in pending):
+                pending.append({"file": df, "symbol": "dependency"})
+
+        needs_more = bool(pending)
+        status = "inspecting" if needs_more else "answering"
+
         return {
             "graph_investigations": graph_results,
             "tools_used": tools_used,
             "evidence": evidence,
             "needs_graph_investigation": False,
-            "investigation_status": "inspecting" if state.get("needs_more_investigation") else "answering",
+            "needs_more_investigation": needs_more,
+            "pending_inspections": pending,
+            "investigation_status": status,
         }
 
     def source_inspection(state: AgentState) -> dict[str, Any]:
         """Node 4: Execute direct source code inspection using Tool 2."""
-        target = state.get("target_inspection")
+        targets = list(state.get("pending_inspections", []))
+        if not targets and state.get("target_inspection"):
+            targets = [state["target_inspection"]]
+
         source_inspections = list(state.get("source_inspections", []))
         evidence = list(state.get("evidence", []))
 
-        if target and target.get("file"):
+        for target in targets:
+            if not target or not target.get("file"):
+                continue
             result = inspection_tool.inspect(
                 file_path=target["file"],
                 start_line=target.get("start_line"),
@@ -235,7 +282,7 @@ def create_agent_graph(
                     evidence.append(
                         {
                             "file": result["file"],
-                            "symbol": "inspected_range",
+                            "symbol": target.get("symbol", "inspected_range"),
                             "start_line": result.get("start_line"),
                             "end_line": result.get("end_line"),
                             "lines": result.get("lines"),
@@ -249,6 +296,7 @@ def create_agent_graph(
             "source_inspections": source_inspections,
             "evidence": evidence,
             "tools_used": tools_used,
+            "pending_inspections": [],
             "iteration": state.get("iteration", 0) + 1,
             "investigation_status": "answering",
         }
