@@ -274,6 +274,38 @@ Returns the graph as JSON nodes and edges:
 
 ---
 
+## Day 8: Frontend Integration (React + Vite)
+
+### Features & Capabilities
+
+1. **Repository Ingestion UI**:
+   - Public GitHub URL input with validation.
+   - Live loading banner while cloning, parsing, embedding with BGE-M3, storing in Qdrant, and building the dependency graph.
+   - Comprehensive statistics display: files found, code/doc files, parsed files, chunks stored, graph nodes/edges.
+   - Extracted file browser with line counts, file size, and viewable source content.
+
+2. **Dual-Mode Querying**:
+   - **RAG Mode (`POST /query`)**: Single-pass semantic search + LLM generation for direct questions.
+   - **Agent Mode (`POST /agent/query`)**: Stateful LangGraph investigation using semantic search, dependency graph traversal, and targeted source inspection.
+   - Configurable Top-K chunks context limit (3, 5, 8, 10).
+   - Suggested query chips for quick repository exploration.
+
+3. **Evidence & Source Excerpts**:
+   - Displays file path, symbol name, line span, and cosine similarity score.
+   - Expandable source code excerpt viewer pulling verified code blocks from both retrieved semantic chunks and targeted file inspections.
+   - Clear empty-state messaging when no citations are available.
+
+4. **Agent Investigation Trace**:
+   - Step-by-step tool workflow visualization (`semantic_search` -> `graph_investigation` -> `source_inspection`).
+   - Visual import dependency chains (`AuthController` -> `AuthService` -> `UserRepository`).
+   - Related symbol discovery list and inspection status tags.
+
+5. **Configuration & Security**:
+   - Centralized API client (`frontend/src/api/client.js`) reading `VITE_API_BASE_URL` with fallback to `http://127.0.0.1:8000`.
+   - Zero credentials exposed in frontend code or environment variables.
+
+---
+
 ## Installation & Setup
 
 ### 1. Backend Setup
@@ -281,6 +313,11 @@ Returns the graph as JSON nodes and edges:
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r backend/requirements.txt
+```
+
+Set your Gemini API key (optional for local mocked tests, required for live LLM generation):
+```powershell
+$env:GEMINI_API_KEY="your-gemini-api-key"
 ```
 
 ### 2. Start Backend API
@@ -292,6 +329,7 @@ Swagger API docs available at `http://127.0.0.1:8000/docs`.
 ### 3. Start Frontend Dashboard
 ```powershell
 cd frontend
+cp .env.example .env
 npm install
 npm run dev
 ```
@@ -301,10 +339,12 @@ Open `http://localhost:5173` in your browser.
 
 ## Running Automated Tests
 
-Run the full suite of **96 unit and pipeline tests**:
+### Backend Test Suite (103 tests)
+Run the full suite of **103 unit, pipeline, and contract tests**:
 ```powershell
 pytest
 ```
+- `test_frontend_contracts.py`: 7 tests verifying CORS headers, query schemas, agent contracts, and 422/404 error formatting
 - `test_graph.py`: 44 tests verifying dependency graph construction, queries, tool wrapper, end-to-end multi-file agent integration, and API endpoint
 - `test_agent.py`: 9 tests verifying LangGraph execution, tool routing, and grounding
 - `test_rag.py`: 16 tests verifying Day 5 retrieval, evidence, and grounded generation
@@ -312,3 +352,10 @@ pytest
 - `test_qdrant_store.py`: 6 tests verifying vector indexing and cosine search
 - `test_parser.py`: 5 tests verifying Tree-sitter AST symbol discovery
 - `test_repository.py`: 5 tests verifying Git cloning and secret exclusion
+
+### Frontend Build
+Verify that the React + Vite frontend builds cleanly with zero errors:
+```powershell
+cd frontend
+npm run build
+```
