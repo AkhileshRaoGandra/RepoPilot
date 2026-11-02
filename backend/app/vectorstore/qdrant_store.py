@@ -66,6 +66,24 @@ class QdrantStore:
                 f"but received {vector_size}-dimensional vectors."
             )
 
+    def reset_collection(self) -> None:
+        """Delete existing collection so subsequent ingestion is cleanly isolated without stale chunks."""
+        if self.client.collection_exists(self.collection_name):
+            self.client.delete_collection(self.collection_name)
+
+    def count(self) -> int:
+        """Return the total number of chunks stored in this collection."""
+        if not self.client.collection_exists(self.collection_name):
+            return 0
+        try:
+            return int(self.client.count(collection_name=self.collection_name, exact=True).count)
+        except Exception:
+            return 0
+
+    def is_empty(self) -> bool:
+        """Return True if collection does not exist or has zero points."""
+        return self.count() == 0
+
     @staticmethod
     def _validate_embedded_chunk(chunk: Mapping[str, Any]) -> tuple[str, Mapping[str, Any], list[float]]:
         if not isinstance(chunk, Mapping):

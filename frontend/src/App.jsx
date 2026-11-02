@@ -241,7 +241,7 @@ export default function App() {
   const [backendOnline, setBackendOnline] = useState(null);
 
   // Step 1: Repository Ingestion State
-  const [githubUrl, setGithubUrl] = useState("https://github.com/owner/repository");
+  const [githubUrl, setGithubUrl] = useState("");
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
   const [analyzeError, setAnalyzeError] = useState("");
   const [indexedRepo, setIndexedRepo] = useState(null);

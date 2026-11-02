@@ -42,7 +42,15 @@ class EmbeddingService:
                 "Install backend/requirements.txt first."
             ) from error
         token = os.getenv("HF_TOKEN") or False
-        return SentenceTransformer(model_name, token=token)
+        try:
+            from huggingface_hub import snapshot_download
+
+            local_path = snapshot_download(model_name, local_files_only=True)
+            model = SentenceTransformer(local_path, token=token)
+        except Exception:
+            model = SentenceTransformer(model_name, token=token)
+        model.max_seq_length = 1024
+        return model
 
 
     @property

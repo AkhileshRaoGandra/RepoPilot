@@ -46,4 +46,27 @@ def create_chunks(source: str, file_path: str, language: str, parsed: dict[str, 
             if len(sections) > 1:
                 metadata.update({"part": index, "parts": len(sections)})
             chunks.append({"content": section, "metadata": metadata})
+
+    # If no functions or classes exist in the file, create module-level chunks
+    # so scripts, settings, constants, and entry points are not silently lost.
+    if not symbols and source.strip():
+        from pathlib import Path
+        stem_name = Path(file_path).stem or "module"
+        sections = _split_content(source, max_lines)
+        total_lines = len(source_lines)
+        for index, (offset, section) in enumerate(sections, start=1):
+            if not section.strip():
+                continue
+            metadata = {
+                "file": file_path,
+                "language": language,
+                "type": "module",
+                "name": stem_name,
+                "start_line": offset + 1,
+                "end_line": min(total_lines, offset + max_lines),
+            }
+            if len(sections) > 1:
+                metadata.update({"part": index, "parts": len(sections)})
+            chunks.append({"content": section, "metadata": metadata})
+
     return chunks

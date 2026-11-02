@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from app.rag.llm import LLMClient
 
 
+import re
+
 # Keywords that suggest the user is asking about code relationships / flow.
 _GRAPH_KEYWORDS = frozenset({
     "depends", "dependency", "dependencies", "dependents",
@@ -23,13 +25,22 @@ _GRAPH_KEYWORDS = frozenset({
     "connected", "related", "relationship",
     "flow", "reach", "chain", "path",
     "how does", "where does",
+    "architecture", "architectural", "layer", "layers",
+    "interact", "interaction", "interactions",
 })
 
 
 def _wants_graph_investigation(question: str) -> bool:
     """Heuristic: does the question suggest relationship / dependency investigation?"""
     q = question.lower()
-    return any(kw in q for kw in _GRAPH_KEYWORDS)
+    for kw in _GRAPH_KEYWORDS:
+        if " " in kw:
+            if kw in q:
+                return True
+        else:
+            if re.search(r"\b" + re.escape(kw) + r"\b", q):
+                return True
+    return False
 
 
 def route_evaluation(state: AgentState) -> str:

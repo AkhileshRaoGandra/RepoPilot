@@ -1,9 +1,10 @@
-"""Tree-sitter based structural parsing for Python, JavaScript, and Java."""
+"""Tree-sitter and AST based structural parsing for Python, JavaScript, and Java."""
 
 from __future__ import annotations
 
+import ast
+import bisect
 import re
-from collections.abc import Iterator
 from typing import Any
 
 from tree_sitter import Language, Parser
@@ -17,13 +18,33 @@ class ParserError(Exception):
 
 
 class UnsupportedLanguageError(ParserError):
-    """Raised when no Tree-sitter grammar is available for a language."""
+    """Raised when no parser grammar is available for a language."""
 
 
 _LANGUAGES = {
     "python": tspython,
     "javascript": tsjavascript,
     "java": tsjava,
+}
+
+_CONTAINERS = {
+    "program",
+    "export_statement",
+    "statement_block",
+    "class_declaration",
+    "class_body",
+    "function_declaration",
+    "method_definition",
+    "variable_declaration",
+    "variable_declarator",
+    "lexical_declaration",
+    "expression_statement",
+    "package_declaration",
+    "import_declaration",
+    "interface_declaration",
+    "method_declaration",
+    "constructor_declaration",
+    "block",
 }
 
 
@@ -39,8 +60,6 @@ def _parser_for(language: str) -> Parser:
         raise UnsupportedLanguageError(f"Tree-sitter does not support language: {language}")
 
     parser = Parser()
-    # Current grammar wheels expose a PyCapsule.  The fallback keeps the module
-    # compatible with earlier Tree-sitter Python bindings.
     grammar_language = Language(grammar.language())
     try:
         parser.language = grammar_language
@@ -49,10 +68,13 @@ def _parser_for(language: str) -> Parser:
     return parser
 
 
-def _walk(node: Any) -> Iterator[Any]:
-    yield node
-    for child in node.children:
-        yield from _walk(child)
+def _walk(node: Any) -> list[Any]:
+    """Collect relevant container and declaration AST nodes into a flat list."""
+    nodes: list[Any] = [node]
+    for current in nodes:
+        if current.type in _CONTAINERS:
+            nodes.extend(current.children)
+    return nodes
 
 
 def _text(node: Any, source_bytes: bytes) -> str:
@@ -62,59 +84,6 @@ def _text(node: Any, source_bytes: bytes) -> str:
 def _name(node: Any, source_bytes: bytes) -> str | None:
     name_node = node.child_by_field_name("name")
     return _text(name_node, source_bytes) if name_node is not None else None
-
-
-def _symbol(node: Any, name: str, symbol_type: str, source_bytes: bytes, **extra: str) -> dict[str, object]:
-    return {
-        "name": name,
-        "type": symbol_type,
-        "start_line": node.start_point.row + 1,
-        "end_line": node.end_point.row + 1,
-        **extra,
-    }
-
-
-def _ancestor_class(node: Any, parents: dict[int, Any]) -> Any | None:
-    current = parents.get(id(node))
-    while current is not None:
-        if current.type in {"class_definition", "class_declaration"}:
-            return current
-        current = parents.get(id(current))
-    return None
-
-
-def _python_imports(root: Any, source_bytes: bytes) -> list[str]:
-    imports: list[str] = []
-    for node in _walk(root):
-        text = _text(node, source_bytes).strip()
-        if node.type == "import_statement":
-            for item in text.removeprefix("import ").split(","):
-                imports.append(item.strip().split(" as ")[0].strip())
-        elif node.type == "import_from_statement":
-            match = re.match(r"from\s+([.\w]+)\s+import\s+(.+)", text, re.DOTALL)
-            if match:
-                module, names = match.groups()
-                for item in names.split(","):
-                    imported = item.strip().split(" as ")[0].strip()
-                    imports.append(module if imported == "*" else f"{module}.{imported}")
-    return imports
-
-
-def _imports(language: str, root: Any, source_bytes: bytes) -> list[str]:
-    if language == "python":
-        return _python_imports(root, source_bytes)
-
-    imports: list[str] = []
-    for node in _walk(root):
-        if language == "javascript" and node.type == "import_statement":
-            text = _text(node, source_bytes)
-            match = re.search(r"(?:from\s+)?['\"]([^'\"]+)['\"]", text)
-            if match:
-                imports.append(match.group(1))
-        elif language == "java" and node.type == "import_declaration":
-            text = _text(node, source_bytes).strip().removeprefix("import ").removeprefix("static ").rstrip(";")
-            imports.append(text)
-    return imports
 
 
 def _javascript_variable_function(node: Any, source_bytes: bytes) -> tuple[Any, str] | None:
@@ -128,6 +97,82 @@ def _javascript_variable_function(node: Any, source_bytes: bytes) -> tuple[Any, 
     return None
 
 
+def _parse_python(source: str) -> dict[str, object]:
+    """Parse Python source using Python's native AST parser with 100% C-level memory safety."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as err:
+        return {
+            "language": "python",
+            "classes": [],
+            "functions": [],
+            "methods": [],
+            "imports": [],
+            "errors": [
+                {
+                    "start_line": err.lineno or 1,
+                    "end_line": err.end_lineno or err.lineno or 1,
+                    "reason": err.msg or "syntax error",
+                }
+            ],
+        }
+
+    classes: list[dict[str, object]] = []
+    functions: list[dict[str, object]] = []
+    methods: list[dict[str, object]] = []
+    imports: list[str] = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            classes.append({
+                "name": node.name,
+                "type": "class",
+                "start_line": node.lineno,
+                "end_line": node.end_lineno or node.lineno,
+            })
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    methods.append({
+                        "name": item.name,
+                        "type": "method",
+                        "start_line": item.lineno,
+                        "end_line": item.end_lineno or item.lineno,
+                        "class_name": node.name,
+                    })
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                imports.append(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            for alias in node.names:
+                imports.append(mod if alias.name == "*" else f"{mod}.{alias.name}")
+
+    class_spans = [(c["start_line"], c["end_line"]) for c in classes]
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            in_class = any(s <= node.lineno <= e for s, e in class_spans)
+            if not in_class:
+                functions.append({
+                    "name": node.name,
+                    "type": "function",
+                    "start_line": node.lineno,
+                    "end_line": node.end_lineno or node.lineno,
+                })
+
+    classes.sort(key=lambda x: int(x["start_line"]))
+    functions.sort(key=lambda x: int(x["start_line"]))
+    methods.sort(key=lambda x: int(x["start_line"]))
+
+    return {
+        "language": "python",
+        "classes": classes,
+        "functions": functions,
+        "methods": methods,
+        "imports": list(dict.fromkeys(item for item in imports if item)),
+        "errors": [],
+    }
+
+
 def parse_source(source: str, language: str) -> dict[str, object]:
     """Parse source and return classes, functions, methods, imports, and errors.
 
@@ -135,58 +180,140 @@ def parse_source(source: str, language: str) -> dict[str, object]:
     lines copied by :mod:`app.code.chunker`.
     """
     normalised = _normalise_language(language)
+    if normalised == "python":
+        return _parse_python(source)
+
     parser = _parser_for(normalised)
     source_bytes = source.encode("utf-8")
-    root = parser.parse(source_bytes).root_node
-    parents = {id(child): parent for parent in _walk(root) for child in parent.children}
+    tree = parser.parse(source_bytes)
+    root = tree.root_node
+
+    line_offsets = [0] + [m.end() for m in re.finditer(rb"\n", source_bytes)]
+
+    def line_num(byte_offset: int) -> int:
+        return bisect.bisect_right(line_offsets, byte_offset)
 
     classes: list[dict[str, object]] = []
     functions: list[dict[str, object]] = []
     methods: list[dict[str, object]] = []
+    imports: list[str] = []
+    errors: list[dict[str, object]] = []
 
-    for node in _walk(root):
-        if node.type in {"class_definition", "class_declaration"}:
-            name = _name(node, source_bytes)
-            if name:
-                classes.append(_symbol(node, name, "class", source_bytes))
-            continue
+    try:
+        nodes = _walk(root)
 
-        is_function = node.type == "function_definition" or (
-            normalised == "javascript" and node.type == "function_declaration"
-        )
-        variable_function = _javascript_variable_function(node, source_bytes) if normalised == "javascript" else None
-        is_method = node.type == "method_definition" or (
-            normalised == "java" and node.type in {"method_declaration", "constructor_declaration"}
-        )
+        for node in nodes:
+            if node.type in {"class_definition", "class_declaration"}:
+                name = _name(node, source_bytes)
+                if name:
+                    classes.append({
+                        "name": name,
+                        "type": "class",
+                        "start_line": line_num(node.start_byte),
+                        "end_line": line_num(node.end_byte),
+                    })
 
-        if is_function:
-            name = _name(node, source_bytes)
-            if not name:
+        def _enclosing_class(node: Any) -> str | None:
+            nr1 = line_num(node.start_byte)
+            nr2 = line_num(node.end_byte)
+            best_name = None
+            best_span = float("inf")
+            for c in classes:
+                cr1 = int(c["start_line"])
+                cr2 = int(c["end_line"])
+                if cr1 <= nr1 and nr2 <= cr2:
+                    span = cr2 - cr1
+                    if span < best_span:
+                        best_span = span
+                        best_name = str(c["name"])
+            return best_name
+
+        for node in nodes:
+            if node.type in {"class_definition", "class_declaration"}:
                 continue
-            class_node = _ancestor_class(node, parents)
-            if class_node is None:
-                functions.append(_symbol(node, name, "function", source_bytes))
-            else:
-                methods.append(_symbol(node, name, "method", source_bytes, class_name=_name(class_node, source_bytes) or "<anonymous>"))
-        elif variable_function is not None:
-            function_node, name = variable_function
-            functions.append(_symbol(function_node, name, "function", source_bytes))
-        elif is_method:
-            name = _name(node, source_bytes)
-            class_node = _ancestor_class(node, parents)
-            if name and class_node is not None:
-                methods.append(_symbol(node, name, "method", source_bytes, class_name=_name(class_node, source_bytes) or "<anonymous>"))
 
-    errors = [
-        {"start_line": node.start_point.row + 1, "end_line": node.end_point.row + 1, "reason": node.type}
-        for node in _walk(root)
-        if node.type == "ERROR" or node.is_missing
-    ]
+            is_function = node.type == "function_definition" or (
+                normalised == "javascript" and node.type == "function_declaration"
+            )
+            variable_function = _javascript_variable_function(node, source_bytes) if normalised == "javascript" else None
+            is_method = node.type == "method_definition" or (
+                normalised == "java" and node.type in {"method_declaration", "constructor_declaration"}
+            )
+
+            if is_function:
+                name = _name(node, source_bytes)
+                if not name:
+                    continue
+                cls = _enclosing_class(node)
+                entry = {
+                    "name": name,
+                    "start_line": line_num(node.start_byte),
+                    "end_line": line_num(node.end_byte),
+                }
+                if cls is None:
+                    entry["type"] = "function"
+                    functions.append(entry)
+                else:
+                    entry["type"] = "method"
+                    entry["class_name"] = cls
+                    methods.append(entry)
+
+            elif variable_function is not None:
+                function_node, name = variable_function
+                cls = _enclosing_class(function_node)
+                entry = {
+                    "name": name,
+                    "start_line": line_num(function_node.start_byte),
+                    "end_line": line_num(function_node.end_byte),
+                }
+                if cls is None:
+                    entry["type"] = "function"
+                    functions.append(entry)
+                else:
+                    entry["type"] = "method"
+                    entry["class_name"] = cls
+                    methods.append(entry)
+
+            elif is_method:
+                name = _name(node, source_bytes)
+                if name:
+                    cls = _enclosing_class(node)
+                    methods.append({
+                        "name": name,
+                        "type": "method",
+                        "start_line": line_num(node.start_byte),
+                        "end_line": line_num(node.end_byte),
+                        "class_name": cls or "<anonymous>",
+                    })
+
+        for node in nodes:
+            if normalised == "javascript" and node.type == "import_statement":
+                text = _text(node, source_bytes)
+                match = re.search(r"(?:from\s+)?['\"]([^'\"]+)['\"]", text)
+                if match:
+                    imports.append(match.group(1))
+            elif normalised == "java" and node.type == "import_declaration":
+                text = _text(node, source_bytes).strip().removeprefix("import ").removeprefix("static ").rstrip(";")
+                imports.append(text)
+
+        if root.has_error:
+            for node in nodes:
+                if node.type == "ERROR" or node.is_missing:
+                    errors.append({
+                        "start_line": line_num(node.start_byte),
+                        "end_line": line_num(node.end_byte),
+                        "reason": node.type,
+                    })
+    finally:
+        del nodes
+        del root
+        del tree
+
     return {
         "language": normalised,
         "classes": classes,
         "functions": functions,
         "methods": methods,
-        "imports": list(dict.fromkeys(item for item in _imports(normalised, root, source_bytes) if item)),
+        "imports": list(dict.fromkeys(item for item in imports if item)),
         "errors": errors,
     }

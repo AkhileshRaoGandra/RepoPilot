@@ -14,10 +14,11 @@ DEFAULT_SYSTEM_PROMPT = (
     "Your task is to answer questions about the codebase strictly using the provided repository context.\n\n"
     "Guidelines:\n"
     "1. Rely only on the code and metadata provided in the context.\n"
-    "2. Do not invent, assume, or hallucinate repository details that are not in the context.\n"
+    "2. Do not invent, assume, or hallucinate repository details, files, classes, or functions that are not in the context.\n"
     "3. If the provided context is empty, missing, or insufficient to answer the question, clearly state:\n"
     '   "The provided repository context is insufficient to answer this question."\n'
     "4. Reference specific files and line numbers (e.g. path/to/file.py:10-25) when referencing code.\n"
+    "5. If asked about a feature, module, or integration that is absent from the repository context (e.g. payment gateway when no payments exist), clearly explain that the feature is not implemented or present in the repository.\n"
 )
 
 

@@ -4,9 +4,22 @@
  * falling back to local FastAPI on http://127.0.0.1:8000.
  */
 
-export const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000"
-).replace(/\/+$/, "");
+export const API_BASE_URL = (() => {
+  if (import.meta.env.VITE_API_BASE_URL !== undefined && import.meta.env.VITE_API_BASE_URL !== "") {
+    return import.meta.env.VITE_API_BASE_URL.replace(/\/+$/, "");
+  }
+  // When deployed on Vercel or production domain, route requests through the /api rewrite
+  if (
+    typeof window !== "undefined" &&
+    window.location &&
+    window.location.hostname !== "localhost" &&
+    window.location.hostname !== "127.0.0.1"
+  ) {
+    return "/api";
+  }
+  // Default fallback for standalone local FastAPI server
+  return "http://127.0.0.1:8000";
+})();
 
 /**
  * Check if the FastAPI backend is running and reachable.

@@ -26,19 +26,40 @@ REPOSITORIES_DIR = PROJECT_ROOT / "data" / "repositories"
 embedding_service = EmbeddingService()
 
 
-@lru_cache
+_vector_store: QdrantStore | None = None
+
+
 def get_vector_store() -> QdrantStore:
-    """Create the local Qdrant client only when chunks need to be persisted."""
-    return QdrantStore(path=PROJECT_ROOT / "data" / "qdrant")
+    """Return the shared local Qdrant client."""
+    global _vector_store
+    if _vector_store is None:
+        _vector_store = QdrantStore(path=PROJECT_ROOT / "data" / "qdrant")
+    return _vector_store
 
 
-# Module-level dependency graph, populated during analyse_repository().
+# Module-level dependency graph and active repository reference
 _dependency_graph: DependencyGraph | None = None
+_active_repository: str | None = None
 
 
 def get_dependency_graph() -> DependencyGraph | None:
     """Return the most recently built dependency graph (or None)."""
     return _dependency_graph
+
+
+def get_active_repository() -> str | None:
+    """Return the name of the currently indexed repository (or None)."""
+    return _active_repository
+
+
+def is_repository_indexed() -> bool:
+    """Return True if an ingested repository is active with indexed chunks."""
+    if _active_repository is None and _dependency_graph is None:
+        return False
+    try:
+        return not get_vector_store().is_empty()
+    except Exception:
+        return False
 
 
 def __getattr__(name: str) -> Any:
@@ -87,6 +108,7 @@ IGNORED_FILE_NAMES = {
 }
 MAX_FILE_SIZE_BYTES = 500 * 1024  # Skip individual files > 500 KB to avoid freezing memory
 MAX_CHUNKS_PER_REPO = 500         # Embed up to 500 chunks so CPU embedding completes in <30 seconds
+MAX_SCANNED_FILES = 2000          # Upper bound on discovered files to prevent memory exhaustion
 SENSITIVE_FILE_NAMES = {".env"}
 SENSITIVE_SUFFIXES = {".pem", ".key", ".crt"}
 
@@ -231,10 +253,14 @@ def scan_repository(repository_path: Path) -> tuple[list[dict[str, object]], int
     has_non_ignored_file = False
 
     for directory, subdirectories, filenames in os.walk(repository_path):
+        if len(files) >= MAX_SCANNED_FILES:
+            break
         subdirectories[:] = sorted(name for name in subdirectories if name not in IGNORED_DIRECTORIES)
         filenames.sort()
         current_directory = Path(directory)
         for filename in filenames:
+            if len(files) >= MAX_SCANNED_FILES:
+                break
             file_path = current_directory / filename
             if is_sensitive_file(file_path):
                 continue
@@ -252,7 +278,7 @@ def scan_repository(repository_path: Path) -> tuple[list[dict[str, object]], int
 
 def analyze_repository(github_url: str) -> dict[str, object]:
     """Clone/open a repository and return extracted files plus embedded code chunks."""
-    global _dependency_graph
+    global _dependency_graph, _active_repository
 
     reference, repository_path = clone_or_open_repository(github_url)
     files, unreadable_files, has_non_ignored_file = scan_repository(repository_path)
@@ -294,8 +320,14 @@ def analyze_repository(github_url: str) -> dict[str, object]:
 
     print(f"[Ingestion] Embedding {len(chunks)} code chunks with BGE-M3...")
     embedded_chunks = embedding_service.embed_chunks(chunks)
+
+    # Reset collection so the vector store is clean and isolated for this repository
+    vector_store = get_vector_store()
+    vector_store.reset_collection()
+
     print(f"[Ingestion] Upserting {len(embedded_chunks)} chunks to Qdrant...")
-    stored_point_ids = get_vector_store().upsert_chunks(embedded_chunks)
+    stored_point_ids = vector_store.upsert_chunks(embedded_chunks)
+    _active_repository = reference.name
     print(f"[Ingestion] Successfully ingested repository {reference.name}!")
 
     # Invalidate cached services so agent and RAG query immediately switch to the new repository
