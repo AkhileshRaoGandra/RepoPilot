@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -169,6 +170,35 @@ def agent_query(request: QueryRequest) -> dict[str, object]:
     except Exception as error:
         logger.error(f"Error executing agent query: {error}", exc_info=True)
         raise HTTPException(status_code=500, detail="An error occurred while executing the agent investigation.") from error
+
+
+@api_router.get("/health/llm")
+def llm_health_check() -> dict[str, object]:
+    """Inspect and report the active LLM client and API key configuration status."""
+    from app.rag.llm import GeminiLLMClient, HttpLLMClient, TemplateGroundedClient, get_default_llm_client
+
+    client = get_default_llm_client()
+    has_gemini = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
+    has_openai = bool(os.getenv("OPENAI_API_KEY"))
+
+    client_type = type(client).__name__
+    is_live = not isinstance(client, TemplateGroundedClient)
+
+    return {
+        "status": "connected" if is_live else "missing_api_key",
+        "client": client_type,
+        "is_live_llm": is_live,
+        "env_detected": {
+            "GEMINI_API_KEY": has_gemini,
+            "OPENAI_API_KEY": has_openai,
+        },
+        "model": getattr(client, "model", "none"),
+        "message": (
+            "Live LLM is configured and active."
+            if is_live
+            else "No LLM API key detected in environment. RepoPilot is using TemplateGroundedClient fallback."
+        ),
+    }
 
 
 # Include router at both root ('/') and '/api' prefix to support both direct and rewritten Vercel requests
