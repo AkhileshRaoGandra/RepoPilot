@@ -7,7 +7,7 @@ _BACKEND_DIR = str(Path(__file__).resolve().parents[1])
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -26,7 +26,9 @@ from app.ingestion.repository import (
     get_dependency_graph,
     get_vector_store,
     is_repository_indexed,
+    parse_github_url,
 )
+from app.ingestion.tasks import run_ingestion_task, task_manager
 from app.agent import get_agent_service
 from app.rag import get_rag_service, get_retriever
 
@@ -75,8 +77,6 @@ def _ensure_repository_ready(retriever_instance: object | None = None) -> None:
     )
 
 
-from fastapi import APIRouter
-
 api_router = APIRouter()
 
 
@@ -96,19 +96,62 @@ def repository_status() -> dict[str, object]:
 
 
 @api_router.post("/repository/analyze")
-def analyze(request: RepositoryAnalyzeRequest) -> dict[str, object]:
+def analyze(
+    request: RepositoryAnalyzeRequest,
+    background_tasks: BackgroundTasks,
+    sync: bool = False,
+) -> dict[str, object]:
+    """Queue repository analysis as a background task, or run synchronously if sync=True."""
+    # Validate GitHub URL format upfront
+    url_str = str(request.github_url)
     try:
-        logger.info(f"Analyzing repository: {request.github_url}")
-        return analyze_repository(str(request.github_url))
+        parse_github_url(url_str)
     except InvalidGitHubUrlError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    except RepositoryNotFoundError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except (CloneFailedError, EmptyRepositoryError, UnsupportedFilesError) as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
-    except Exception as error:
-        logger.error(f"Unexpected error analyzing repository: {error}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to analyze repository due to an internal server error.") from error
+
+    # Synchronous execution path (for direct testing or callers requesting sync=True)
+    if sync:
+        try:
+            logger.info(f"Analyzing repository synchronously: {url_str}")
+            return analyze_repository(url_str)
+        except RepositoryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except (CloneFailedError, EmptyRepositoryError, UnsupportedFilesError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except Exception as error:
+            logger.error(f"Unexpected error analyzing repository: {error}", exc_info=True)
+            raise HTTPException(
+                status_code=500, detail="Failed to analyze repository due to an internal server error."
+            ) from error
+
+    # Asynchronous task path (prevents HTTP timeouts on Vercel and gateways)
+    task = task_manager.create_task(url_str)
+    background_tasks.add_task(run_ingestion_task, task.task_id, url_str)
+    logger.info(f"Queued background ingestion task {task.task_id} for {url_str}")
+
+    return {
+        "task_id": task.task_id,
+        "status": "queued",
+        "progress": 0,
+        "step": "Queued for processing",
+        "github_url": url_str,
+        "message": "Repository analysis queued in background.",
+    }
+
+
+@api_router.get("/repository/tasks/{task_id}")
+def get_task_status(task_id: str) -> dict[str, object]:
+    """Poll the status and progress of an asynchronous repository ingestion task."""
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found.")
+    return task.to_dict()
+
+
+@api_router.get("/repository/tasks")
+def list_tasks() -> dict[str, object]:
+    """Return recently created ingestion tasks."""
+    return {"tasks": [t.to_dict() for t in task_manager._tasks.values()]}
 
 
 @api_router.get("/repository/graph")

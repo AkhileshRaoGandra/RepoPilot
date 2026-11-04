@@ -276,17 +276,31 @@ def scan_repository(repository_path: Path) -> tuple[list[dict[str, object]], int
     return files, unreadable_files, has_non_ignored_file
 
 
-def analyze_repository(github_url: str) -> dict[str, object]:
+def analyze_repository(
+    github_url: str,
+    progress_callback: Callable[[int, str], None] | None = None,
+) -> dict[str, object]:
     """Clone/open a repository and return extracted files plus embedded code chunks."""
     global _dependency_graph, _active_repository
 
+    def _report(percent: int, message: str) -> None:
+        if progress_callback is not None:
+            try:
+                progress_callback(percent, message)
+            except Exception:
+                pass
+
+    _report(10, "Cloning or opening repository from GitHub...")
     reference, repository_path = clone_or_open_repository(github_url)
+
+    _report(25, "Scanning repository files and filtering directories...")
     files, unreadable_files, has_non_ignored_file = scan_repository(repository_path)
     if not has_non_ignored_file:
         raise EmptyRepositoryError("Repository contains no files to analyze.")
     if not files:
         raise UnsupportedFilesError("Repository contains no supported readable files.")
 
+    _report(40, f"Discovered {len(files)} files. Parsing AST syntax trees...")
     documentation_extensions = {".md"}
     documentation_files = sum(file["extension"] in documentation_extensions for file in files)
     chunks: list[dict[str, object]] = []
@@ -309,6 +323,7 @@ def analyze_repository(github_url: str) -> dict[str, object]:
             parsing_failures.append({"path": str(file["path"]), "reason": str(error)})
 
     # Build the dependency graph from parsed AST data
+    _report(60, f"Building dependency relationship graph ({parsed_files} parsed files)...")
     print(f"[Ingestion] Building dependency graph for {len(files)} files...")
     _dependency_graph = build_graph(files, parsed_results)
 
@@ -318,10 +333,12 @@ def analyze_repository(github_url: str) -> dict[str, object]:
         print(f"[Ingestion] Capping chunks from {total_chunks_created} to {MAX_CHUNKS_PER_REPO} to keep embedding fast (<30s).")
         chunks = chunks[:MAX_CHUNKS_PER_REPO]
 
+    _report(75, f"Generating BGE-M3 vector embeddings for {len(chunks)} code chunks...")
     print(f"[Ingestion] Embedding {len(chunks)} code chunks with BGE-M3...")
     embedded_chunks = embedding_service.embed_chunks(chunks)
 
     # Reset collection so the vector store is clean and isolated for this repository
+    _report(90, f"Indexing {len(embedded_chunks)} chunks into Qdrant vector store...")
     vector_store = get_vector_store()
     vector_store.reset_collection()
 
@@ -329,6 +346,8 @@ def analyze_repository(github_url: str) -> dict[str, object]:
     stored_point_ids = vector_store.upsert_chunks(embedded_chunks)
     _active_repository = reference.name
     print(f"[Ingestion] Successfully ingested repository {reference.name}!")
+
+    _report(100, f"Successfully indexed repository {reference.name}!")
 
     # Invalidate cached services so agent and RAG query immediately switch to the new repository
     try:

@@ -77,8 +77,13 @@ export function formatErrorMessage(err, payload = null) {
 /**
  * Ingest and analyze a public GitHub repository.
  * Endpoint: POST /repository/analyze
+ * Supports async background task queuing with polling to eliminate HTTP gateway timeouts.
+ *
+ * @param {string} githubUrl - GitHub repository URL
+ * @param {(progress: { progress: number, step: string }) => void} [onProgress] - Optional progress callback
+ * @returns {Promise<object>} The final repository analysis result
  */
-export async function analyzeRepository(githubUrl) {
+export async function analyzeRepository(githubUrl, onProgress) {
   const trimmed = (githubUrl || "").trim();
   if (!trimmed) {
     throw new Error("Please enter a GitHub repository URL.");
@@ -103,7 +108,66 @@ export async function analyzeRepository(githubUrl) {
   if (!response.ok) {
     throw new Error(formatErrorMessage(null, payload));
   }
-  return payload;
+
+  // If the server answered synchronously (e.g. sync=True mode), return the payload directly
+  if (!payload || !payload.task_id) {
+    return payload;
+  }
+
+  // Asynchronous background task: Poll GET /repository/tasks/{task_id} until completed or failed
+  const taskId = payload.task_id;
+  const pollIntervalMs = 1500;
+  const maxAttempts = 240; // ~6 minutes maximum polling window
+  let attempts = 0;
+
+  if (onProgress) {
+    onProgress({
+      progress: payload.progress || 0,
+      step: payload.step || "Queued for processing...",
+    });
+  }
+
+  while (attempts < maxAttempts) {
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    attempts++;
+
+    try {
+      const taskRes = await fetch(`${API_BASE_URL}/repository/tasks/${taskId}`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (!taskRes.ok) {
+        const errorData = await taskRes.json().catch(() => null);
+        throw new Error(formatErrorMessage(null, errorData) || `Failed to fetch task status (${taskRes.status})`);
+      }
+
+      const taskData = await taskRes.json();
+
+      if (onProgress) {
+        onProgress({
+          progress: taskData.progress ?? 0,
+          step: taskData.step || "Processing repository...",
+        });
+      }
+
+      if (taskData.status === "completed") {
+        return taskData.result;
+      }
+
+      if (taskData.status === "failed") {
+        throw new Error(taskData.error || "Repository analysis failed.");
+      }
+    } catch (pollErr) {
+      // Re-throw genuine domain failures immediately
+      if (pollErr.message && !pollErr.message.includes("Failed to fetch") && !pollErr.message.includes("NetworkError")) {
+        throw pollErr;
+      }
+      // If a transient network glitch happens while polling, keep polling
+    }
+  }
+
+  throw new Error("Repository analysis timed out after 6 minutes. Please try again.");
 }
 
 /**

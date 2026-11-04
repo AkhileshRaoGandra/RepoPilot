@@ -243,6 +243,7 @@ export default function App() {
   // Step 1: Repository Ingestion State
   const [githubUrl, setGithubUrl] = useState("");
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
+  const [analyzeProgress, setAnalyzeProgress] = useState({ progress: 0, step: "" });
   const [analyzeError, setAnalyzeError] = useState("");
   const [indexedRepo, setIndexedRepo] = useState(null);
 
@@ -296,9 +297,10 @@ export default function App() {
 
     setAnalyzeLoading(true);
     setIndexedRepo(null);
+    setAnalyzeProgress({ progress: 5, step: "Queued for processing..." });
 
     try {
-      const data = await analyzeRepository(trimmed);
+      const data = await analyzeRepository(trimmed, (p) => setAnalyzeProgress(p));
       setIndexedRepo(data);
     } catch (err) {
       setAnalyzeError(err.message || "Failed to analyze repository.");
@@ -524,14 +526,23 @@ export default function App() {
             ))}
           </div>
 
-          {/* Analysis loading state */}
+          {/* Analysis loading state with real-time task progress */}
           {analyzeLoading && (
-            <div className="processing-feedback-card">
+            <div className="processing-feedback-card ingestion-progress-card">
               <div className="feedback-spinner-orbit" />
-              <div className="feedback-text-group">
-                <strong>Cloning & Indexing Repository</strong>
+              <div className="feedback-text-group" style={{ flex: 1 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <strong>{analyzeProgress.step || "Cloning & Indexing Repository..."}</strong>
+                  <span className="progress-percent-pill">{analyzeProgress.progress || 10}%</span>
+                </div>
+                <div className="ingestion-progress-track">
+                  <div
+                    className="ingestion-progress-fill"
+                    style={{ width: `${Math.max(8, analyzeProgress.progress || 10)}%` }}
+                  />
+                </div>
                 <p>
-                  Cloning source files, running Tree-sitter AST symbol parsing, chunking code boundaries, and embedding into Qdrant using BGE-M3.
+                  Running asynchronous background ingestion: Git clone, Tree-sitter AST symbol parsing, relationship graph generation, BGE-M3 embedding, and Qdrant vector indexing.
                 </p>
               </div>
             </div>
