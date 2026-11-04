@@ -1,5 +1,10 @@
 """Root FastAPI entrypoint for Vercel service deployment."""
 
+import os
+
+# Suppress GitPython from crashing if git binary is missing in serverless environments (e.g. Vercel)
+os.environ["GIT_PYTHON_REFRESH"] = "0"
+
 import sys
 from pathlib import Path
 

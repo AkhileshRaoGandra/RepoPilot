@@ -60,3 +60,24 @@ def test_undecodable_file_is_skipped(tmp_path: Path) -> None:
     binary_python = tmp_path / "bad.py"
     binary_python.write_bytes(b"\xff\xfe")
     assert extract_file_metadata(tmp_path, binary_python) is None
+
+
+def test_serverless_git_suppression_and_clone_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Verify that when Git is unavailable, clone_or_open_repository falls back to zipball download."""
+    import app.ingestion.repository as repo_mod
+
+    # Simulate Repo being None (git not installed on serverless)
+    monkeypatch.setattr(repo_mod, "Repo", None)
+
+    # Mock _download_and_extract_zipball to create sample file in destination
+    def mock_download(ref, dest):
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "main.py").write_text("print('fallback works')", encoding="utf-8")
+        return dest
+
+    monkeypatch.setattr(repo_mod, "_download_and_extract_zipball", mock_download)
+
+    ref, dest = repo_mod.clone_or_open_repository("https://github.com/octocat/Hello-World", repositories_dir=tmp_path)
+    assert ref.name == "Hello-World"
+    assert (dest / "main.py").exists()
+    assert (dest / "main.py").read_text() == "print('fallback works')"

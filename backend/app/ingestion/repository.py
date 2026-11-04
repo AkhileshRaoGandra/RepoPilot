@@ -10,7 +10,16 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
 
-from git import GitCommandError, Repo
+# Suppress GitPython from crashing if git binary is missing in serverless environments (e.g. Vercel)
+os.environ["GIT_PYTHON_REFRESH"] = "0"
+
+try:
+    from git import GitCommandError, Repo
+except Exception:  # pragma: no cover
+    class GitCommandError(Exception):  # type: ignore[no-redef]
+        pass
+
+    Repo = None  # type: ignore[assignment]
 
 from app.code.chunker import create_chunks
 from app.code.parser import parse_source
@@ -225,6 +234,43 @@ def detect_language(path: Path) -> str:
     return SUPPORTED_EXTENSIONS.get(path.suffix.lower(), "Unknown")
 
 
+def _download_and_extract_zipball(reference: RepositoryReference, destination: Path) -> Path:
+    """Download and extract repository archive directly via HTTP when git binary is unavailable."""
+    import io
+    import zipfile
+    import httpx
+
+    zip_url = f"https://github.com/{reference.owner}/{reference.name}/archive/refs/heads/main.zip"
+    headers = {"User-Agent": "RepoPilot/0.9.0"}
+    with httpx.Client(follow_redirects=True, timeout=30.0) as client:
+        resp = client.get(zip_url, headers=headers)
+        if resp.status_code == 404:
+            # Fallback to master branch or HEAD
+            resp = client.get(f"https://github.com/{reference.owner}/{reference.name}/archive/HEAD.zip", headers=headers)
+        if resp.status_code == 404:
+            raise RepositoryNotFoundError("Repository was not found or is inaccessible.")
+        resp.raise_for_status()
+
+        destination.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+            namelist = z.namelist()
+            if not namelist:
+                return destination
+            root_prefix = namelist[0].split("/")[0] + "/"
+            for member in z.infolist():
+                if not member.filename.startswith(root_prefix) or member.filename == root_prefix:
+                    continue
+                relative_path = member.filename[len(root_prefix):]
+                target_path = destination / relative_path
+                if member.is_dir():
+                    target_path.mkdir(parents=True, exist_ok=True)
+                else:
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    with z.open(member) as source, open(target_path, "wb") as target:
+                        shutil.copyfileobj(source, target)
+        return destination
+
+
 def clone_or_open_repository(github_url: str, repositories_dir: Path = REPOSITORIES_DIR) -> tuple[RepositoryReference, Path]:
     """Clone a public repository once, or reuse its existing local clone."""
     reference = parse_github_url(github_url)
@@ -232,32 +278,45 @@ def clone_or_open_repository(github_url: str, repositories_dir: Path = REPOSITOR
     destination = repositories_dir / reference.directory_name
 
     if destination.exists():
-        if (destination / ".git").is_dir():
+        if (destination / ".git").is_dir() or any(destination.iterdir()):
             return reference, destination
         raise CloneFailedError(f"Local path exists but is not a Git repository: {destination.name}")
 
+    if Repo is not None:
+        try:
+            print(f"[Ingestion] Cloning {github_url} (shallow clone depth=1)...")
+            Repo.clone_from(
+                github_url,
+                destination,
+                depth=1,
+                single_branch=True,
+                env={"GIT_TERMINAL_PROMPT": "0"},
+            )
+            print(f"[Ingestion] Successfully cloned into {destination.name}")
+            return reference, destination
+        except GitCommandError as error:
+            message = str(error).lower()
+            if "repository not found" in message or "not found" in message:
+                if destination.exists():
+                    shutil.rmtree(destination, ignore_errors=True)
+                raise RepositoryNotFoundError("Repository was not found or is inaccessible.") from error
+            print(f"[Ingestion] Git clone failed ({error}); falling back to HTTP zipball...")
+        except Exception as error:
+            print(f"[Ingestion] Git clone exception ({error}); falling back to HTTP zipball...")
+
+    # Fallback to direct HTTP archive download (works in serverless environments without git binary)
     try:
-        print(f"[Ingestion] Cloning {github_url} (shallow clone depth=1)...")
-        Repo.clone_from(
-            github_url,
-            destination,
-            depth=1,
-            single_branch=True,
-            env={"GIT_TERMINAL_PROMPT": "0"},
-        )
-        print(f"[Ingestion] Successfully cloned into {destination.name}")
-    except GitCommandError as error:
+        print(f"[Ingestion] Downloading repository archive for {reference.name} via HTTP...")
+        _download_and_extract_zipball(reference, destination)
+        print(f"[Ingestion] Successfully extracted archive into {destination.name}")
+    except (RepositoryNotFoundError, CloneFailedError):
         if destination.exists():
             shutil.rmtree(destination, ignore_errors=True)
-        # GitHub uses the same clone failure for absent and private repositories.
-        message = str(error).lower()
-        if "repository not found" in message or "not found" in message:
-            raise RepositoryNotFoundError("Repository was not found or is inaccessible.") from error
-        raise CloneFailedError("Could not clone the repository.") from error
-    except Exception as error:  # Covers network and local Git failures consistently.
+        raise
+    except Exception as error:
         if destination.exists():
             shutil.rmtree(destination, ignore_errors=True)
-        raise CloneFailedError("Could not clone the repository.") from error
+        raise CloneFailedError("Could not clone or download the repository.") from error
 
     return reference, destination
 
