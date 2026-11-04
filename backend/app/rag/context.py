@@ -40,6 +40,18 @@ def format_citation(metadata: Mapping[str, Any]) -> str:
     return f"{file_path}:{lines}" if lines != "Unknown" else file_path
 
 
+def is_documentation_chunk(chunk: Mapping[str, Any]) -> bool:
+    """Return True if chunk represents documentation (README, markdown, rst, txt)."""
+    metadata = chunk.get("metadata", {})
+    file_path = str(metadata.get("file", "")).lower()
+    chunk_type = str(metadata.get("type", "")).lower()
+    return (
+        chunk_type == "documentation"
+        or "readme" in file_path
+        or file_path.endswith((".md", ".rst", ".markdown"))
+    )
+
+
 def extract_evidence(chunks: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Extract structured evidence citations and metadata from retrieved chunks."""
     evidence: list[dict[str, Any]] = []
@@ -52,6 +64,7 @@ def extract_evidence(chunks: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]
             continue
         seen.add(citation)
 
+        is_doc = is_documentation_chunk(chunk)
         evidence.append(
             {
                 "file": str(metadata.get("file", "unknown")),
@@ -61,28 +74,49 @@ def extract_evidence(chunks: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]
                 "lines": format_lines_range(metadata),
                 "citation": citation,
                 "score": chunk.get("score"),
+                "category": "readme" if is_doc else "code",
+                "type": "documentation" if is_doc else str(metadata.get("type", "code")),
             }
         )
     return evidence
 
 
 def build_rag_context(chunks: Sequence[Mapping[str, Any]]) -> str:
-    """Construct a clear, structured context string from retrieved chunks for the LLM.
+    """Construct a clear, structured context string grouped by source code and README documentation.
 
     Each block provides the file path, symbol identity, line span, and exact source code.
     """
     if not chunks:
         return ""
 
-    blocks: list[str] = []
-    for chunk in chunks:
-        content = str(chunk.get("content", "")).strip()
-        metadata = chunk.get("metadata", {})
-        file_path = str(metadata.get("file", "Unknown"))
-        symbol = format_symbol_name(metadata)
-        lines = format_lines_range(metadata)
+    code_chunks = [c for c in chunks if not is_documentation_chunk(c)]
+    doc_chunks = [c for c in chunks if is_documentation_chunk(c)]
 
-        header = f"File: {file_path}\nSymbol: {symbol}\nLines: {lines}"
-        blocks.append(f"{header}\n\n{content}")
+    sections: list[str] = []
 
-    return "\n\n---\n\n".join(blocks)
+    if code_chunks:
+        code_blocks: list[str] = []
+        for chunk in code_chunks:
+            content = str(chunk.get("content", "")).strip()
+            metadata = chunk.get("metadata", {})
+            file_path = str(metadata.get("file", "Unknown"))
+            symbol = format_symbol_name(metadata)
+            lines = format_lines_range(metadata)
+            chunk_type = str(metadata.get("type", "code"))
+            header = f"File: {file_path}\nSymbol: {symbol}\nLines: {lines}\nType: {chunk_type}"
+            code_blocks.append(f"{header}\n\n{content}")
+        sections.append("### [1] SOURCE CODE IMPLEMENTATION CHUNKS:\n\n" + "\n\n---\n\n".join(code_blocks))
+
+    if doc_chunks:
+        doc_blocks: list[str] = []
+        for chunk in doc_chunks:
+            content = str(chunk.get("content", "")).strip()
+            metadata = chunk.get("metadata", {})
+            file_path = str(metadata.get("file", "Unknown"))
+            section_name = str(metadata.get("name", "Documentation Section"))
+            lines = format_lines_range(metadata)
+            header = f"File: {file_path}\nSection: {section_name}\nLines: {lines}"
+            doc_blocks.append(f"{header}\n\n{content}")
+        sections.append("### [2] README & REPOSITORY DOCUMENTATION CHUNKS:\n\n" + "\n\n---\n\n".join(doc_blocks))
+
+    return "\n\n========================================\n\n".join(sections)

@@ -11,7 +11,11 @@ class AgentState(TypedDict, total=False):
     question: str
     top_k: int
     retrieved_chunks: list[dict[str, Any]]
+    code_chunks: list[dict[str, Any]]
+    readme_chunks: list[dict[str, Any]]
     evidence: list[dict[str, Any]]
+    code_evidence: list[dict[str, Any]]
+    readme_evidence: list[dict[str, Any]]
     tools_used: list[str]
     source_inspections: list[dict[str, Any]]
     graph_investigations: list[dict[str, Any]]

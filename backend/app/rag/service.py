@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.rag.context import build_rag_context, extract_evidence
+from app.rag.context import build_rag_context, extract_evidence, is_documentation_chunk
 from app.rag.llm import LLMClient, get_default_llm_client
 from app.rag.retriever import Retriever
 
@@ -19,7 +19,7 @@ DEFAULT_SYSTEM_PROMPT = (
     '   "The provided repository context is insufficient to answer this question."\n'
     "4. Reference specific files and line numbers (e.g. path/to/file.py:10-25 or README.md:1-30) when referencing code or documentation.\n"
     "5. If asked about a feature, module, or integration that is absent from the repository context (e.g. payment gateway when no payments exist), clearly explain that the feature is not implemented or present in the repository.\n"
-    "6. When answering high-level questions (such as architecture, design, concepts, or installation), synthesize BOTH the documentation (e.g. README.md) AND the corresponding source code chunks provided in the context to explain how the concepts map to the actual codebase.\n"
+    "6. Ground your technical explanation primarily in the provided source code chunks. Use the README chunks for architecture and high-level context, but always explain how it is implemented in the actual source code.\n"
 )
 
 
@@ -50,65 +50,39 @@ class RAGService:
         )
 
     def answer_question(self, query: str, top_k: int = 5) -> dict[str, Any]:
-        """Retrieve top-K chunks and generate a grounded answer with evidence citations."""
+        """Retrieve separated code and README chunks and generate a grounded answer."""
         if not isinstance(query, str) or not query.strip():
             raise ValueError("Query must be a non-empty string.")
         if top_k < 1:
             raise ValueError("top_k must be at least 1.")
 
         cleaned_query = query.strip()
-        chunks = list(self.retriever.retrieve(query=cleaned_query, top_k=top_k))
-
-        # Check for architectural / conceptual queries to balance README and code context
-        concept_keywords = {
-            "architecture", "architectural", "design", "structure", "overview",
-            "install", "installation", "setup", "run", "concept", "concepts",
-            "what does", "how does it work", "components", "stack", "readme",
-        }
-        question_lower = cleaned_query.lower()
-        is_concept_query = any(kw in question_lower for kw in concept_keywords)
-
-        def _is_doc(c: Mapping[str, Any]) -> bool:
-            meta = c.get("metadata", {})
-            f = str(meta.get("file", "")).lower()
-            return meta.get("type") == "documentation" or "readme" in f or f.endswith((".md", ".rst", ".txt"))
-
-        def _is_code(c: Mapping[str, Any]) -> bool:
-            return not _is_doc(c)
-
-        if is_concept_query and chunks:
-            seen = {
-                f"{c.get('metadata', {}).get('file')}:{c.get('metadata', {}).get('start_line')}"
-                for c in chunks
-            }
-            if not any(_is_doc(c) for c in chunks):
-                try:
-                    for dc in self.retriever.retrieve(query=f"README architecture overview installation {cleaned_query}", top_k=2):
-                        if _is_doc(dc):
-                            cit = f"{dc.get('metadata', {}).get('file')}:{dc.get('metadata', {}).get('start_line')}"
-                            if cit not in seen:
-                                seen.add(cit)
-                                chunks.append(dc)
-                except Exception:
-                    pass
-            if not any(_is_code(c) for c in chunks):
-                try:
-                    for cc in self.retriever.retrieve(query=f"main entrypoint implementation {cleaned_query}", top_k=2):
-                        if _is_code(cc):
-                            cit = f"{cc.get('metadata', {}).get('file')}:{cc.get('metadata', {}).get('start_line')}"
-                            if cit not in seen:
-                                seen.add(cit)
-                                chunks.append(cc)
-                except Exception:
-                    pass
+        if (
+            hasattr(self.retriever, "retrieve_separated")
+            and getattr(self.retriever, "embedding_service", None) is not None
+        ):
+            sep = self.retriever.retrieve_separated(query=cleaned_query, top_k=top_k)
+            code_chunks = sep.get("code_chunks", [])
+            readme_chunks = sep.get("readme_chunks", [])
+            chunks = sep.get("all_chunks", [])
+        else:
+            chunks = list(self.retriever.retrieve(query=cleaned_query, top_k=top_k))
+            code_chunks = [c for c in chunks if not is_documentation_chunk(c)]
+            readme_chunks = [c for c in chunks if is_documentation_chunk(c)]
 
         evidence = extract_evidence(chunks)
+        code_evidence = [e for e in evidence if e.get("category") == "code"]
+        readme_evidence = [e for e in evidence if e.get("category") == "readme"]
 
         if not chunks:
             return {
                 "question": cleaned_query,
                 "answer": "The provided repository context is insufficient to answer this question.",
                 "evidence": [],
+                "code_evidence": [],
+                "readme_evidence": [],
+                "code_chunks": [],
+                "readme_chunks": [],
                 "retrieved_chunks": [],
             }
 
@@ -120,5 +94,9 @@ class RAGService:
             "question": cleaned_query,
             "answer": answer,
             "evidence": evidence,
+            "code_evidence": code_evidence,
+            "readme_evidence": readme_evidence,
+            "code_chunks": code_chunks,
+            "readme_chunks": readme_chunks,
             "retrieved_chunks": chunks,
         }

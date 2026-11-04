@@ -893,111 +893,166 @@ function MainApp() {
               </div>
             )}
 
-            {/* Evidence Section */}
+            {/* Evidence Section: Divided into Code Chunks and README Chunks */}
             <section className="structural-output-section" aria-labelledby="evidence-header">
-              <div className="output-section-header">
-                <div className="output-header-left">
-                  <h3 id="evidence-header" className="output-heading">Evidence</h3>
-                  {queryResult.evidence && queryResult.evidence.length > 0 && (
-                    <span className="evidence-count-pill">
-                      {queryResult.evidence.length} citations
-                    </span>
-                  )}
-                </div>
+              {(() => {
+                const allEvidence = queryResult.evidence || [];
+                const isDocFile = (f) => {
+                  const lower = (f || "").toLowerCase();
+                  return lower.includes("readme") || lower.endsWith(".md") || lower.endsWith(".rst") || lower.endsWith(".markdown");
+                };
+                const codeCitations = (queryResult.code_evidence && queryResult.code_evidence.length > 0)
+                  ? queryResult.code_evidence
+                  : allEvidence.filter((c) => c.category === "code" || (!c.category && !isDocFile(c.file)));
+                const readmeCitations = (queryResult.readme_evidence && queryResult.readme_evidence.length > 0)
+                  ? queryResult.readme_evidence
+                  : allEvidence.filter((c) => c.category === "readme" || (!c.category && isDocFile(c.file)));
 
-                {queryResult.evidence && queryResult.evidence.length > 1 && (
-                  <button
-                    type="button"
-                    className="toggle-all-excerpts-btn"
-                    onClick={() => setExpandAllExcerpts((prev) => !prev)}
-                  >
-                    {expandAllExcerpts ? "Collapse All Excerpts" : "Expand All Excerpts"}
-                  </button>
-                )}
-              </div>
+                function renderCitationCard(item, keyIndex, isDocSection) {
+                  const lineInfo =
+                    item.lines && item.lines !== "Unknown" ? `Lines ${item.lines}` : null;
+                  const isExpanded = expandAllExcerpts || expandedExcerptIndex === keyIndex;
 
-              {queryResult.evidence && queryResult.evidence.length > 0 ? (
-                <div className="evidence-cards-stream">
-                  {queryResult.evidence.map((item, index) => {
-                    const lineInfo =
-                      item.lines && item.lines !== "Unknown" ? `Lines ${item.lines}` : null;
-                    const isExpanded = expandAllExcerpts || expandedExcerptIndex === index;
+                  const matchingChunk = (queryResult.retrieved_chunks || []).find(
+                    (c) => c.metadata && c.metadata.file === item.file && (c.metadata.start_line === item.start_line || !item.start_line)
+                  ) || (queryResult.retrieved_chunks || []).find(
+                    (c) => c.metadata && c.metadata.file === item.file
+                  );
+                  const matchingInsp = (queryResult.source_inspections || []).find(
+                    (i) => i.file === item.file && i.content
+                  );
+                  const codeExcerpt =
+                    (matchingInsp && matchingInsp.content) ||
+                    (matchingChunk && matchingChunk.content) ||
+                    null;
 
-                    // Locate matching code content from retrieved chunks or source inspections
-                    const matchingChunk = (queryResult.retrieved_chunks || []).find(
-                      (c) => c.metadata && c.metadata.file === item.file
-                    );
-                    const matchingInsp = (queryResult.source_inspections || []).find(
-                      (i) => i.file === item.file && i.content
-                    );
-                    const codeExcerpt =
-                      (matchingInsp && matchingInsp.content) ||
-                      (matchingChunk && matchingChunk.content) ||
-                      null;
-
-                    return (
-                      <article key={index} className="evidence-citation-card">
-                        <div className="citation-header-bar">
-                          <div className="citation-file-meta">
-                            <FileBadge filepath={item.file} />
-                            <span className="citation-filepath">{item.file}</span>
-                            {lineInfo && (
-                              <>
-                                <span className="citation-sep">·</span>
-                                <span className="citation-lines">{lineInfo}</span>
-                              </>
-                            )}
-                            {item.symbol && item.symbol !== "dependency" && (
-                              <>
-                                <span className="citation-sep">·</span>
-                                <span className="citation-symbol">{item.symbol}</span>
-                              </>
-                            )}
-                          </div>
-
-                          {codeExcerpt && (
-                            <button
-                              type="button"
-                              className="view-excerpt-action-btn"
-                              onClick={() =>
-                                setExpandedExcerptIndex(isExpanded ? null : index)
-                              }
-                            >
-                              {isExpanded ? "Hide excerpt ▲" : "View excerpt ▼"}
-                            </button>
+                  return (
+                    <article key={keyIndex} className={`evidence-citation-card ${isDocSection ? "doc-citation" : "code-citation"}`}>
+                      <div className="citation-header-bar">
+                        <div className="citation-file-meta">
+                          <FileBadge filepath={item.file} />
+                          <span className="citation-filepath">{item.file}</span>
+                          {lineInfo && (
+                            <>
+                              <span className="citation-sep">·</span>
+                              <span className="citation-lines">{lineInfo}</span>
+                            </>
+                          )}
+                          {item.symbol && item.symbol !== "dependency" && (
+                            <>
+                              <span className="citation-sep">·</span>
+                              <span className="citation-symbol">{item.symbol}</span>
+                            </>
                           )}
                         </div>
 
-                        {/* Expandable IDE code excerpt box */}
-                        {isExpanded && codeExcerpt && (
-                          <div className="citation-code-viewer">
-                            <div className="code-viewer-topbar">
-                              <span className="viewer-file-tag">
-                                {item.file} {lineInfo ? `(${lineInfo})` : ""}
-                              </span>
-                              <button
-                                type="button"
-                                className="viewer-copy-btn"
-                                onClick={() => handleCopySnippet(codeExcerpt, index)}
-                              >
-                                {copiedSnippetIndex === index ? "Copied ✓" : "Copy Snippet"}
-                              </button>
-                            </div>
-                            <pre className="viewer-pre-block">
-                              <code>{codeExcerpt}</code>
-                            </pre>
-                          </div>
+                        {codeExcerpt && (
+                          <button
+                            type="button"
+                            className="view-excerpt-action-btn"
+                            onClick={() =>
+                              setExpandedExcerptIndex(isExpanded ? null : keyIndex)
+                            }
+                          >
+                            {isExpanded ? "Hide excerpt ▲" : "View excerpt ▼"}
+                          </button>
                         )}
-                      </article>
-                    );
-                  })}
-                </div>
-              ) : (
-                <p className="no-evidence-text">No direct repository citations returned.</p>
-              )}
+                      </div>
+
+                      {/* Expandable IDE code excerpt box */}
+                      {isExpanded && codeExcerpt && (
+                        <div className="citation-code-viewer">
+                          <div className="code-viewer-topbar">
+                            <span className="viewer-file-tag">
+                              {item.file} {lineInfo ? `(${lineInfo})` : ""}
+                            </span>
+                            <button
+                              type="button"
+                              className="viewer-copy-btn"
+                              onClick={() => handleCopySnippet(codeExcerpt, keyIndex)}
+                            >
+                              {copiedSnippetIndex === keyIndex ? "Copied ✓" : "Copy Snippet"}
+                            </button>
+                          </div>
+                          <pre className="viewer-pre-block">
+                            <code>{codeExcerpt}</code>
+                          </pre>
+                        </div>
+                      )}
+                    </article>
+                  );
+                }
+
+                return (
+                  <>
+                    <div className="output-section-header">
+                      <div className="output-header-left">
+                        <h3 id="evidence-header" className="output-heading">Evidence Citations</h3>
+                        {allEvidence.length > 0 && (
+                          <span className="evidence-count-pill">
+                            {allEvidence.length} total citations
+                          </span>
+                        )}
+                      </div>
+
+                      {allEvidence.length > 1 && (
+                        <button
+                          type="button"
+                          className="toggle-all-excerpts-btn"
+                          onClick={() => setExpandAllExcerpts((prev) => !prev)}
+                        >
+                          {expandAllExcerpts ? "Collapse All Excerpts" : "Expand All Excerpts"}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Part 1: Source Code Citations */}
+                    <div className="evidence-subsection">
+                      <div className="evidence-group-header">
+                        <div className="evidence-group-title">
+                          <span className="evidence-group-icon">💻</span>
+                          <span className="evidence-group-name">Source Code Chunks</span>
+                          <span className="evidence-group-badge code-badge">
+                            {codeCitations.length} code chunk{codeCitations.length === 1 ? "" : "s"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {codeCitations.length > 0 ? (
+                        <div className="evidence-cards-stream">
+                          {codeCitations.map((item, idx) => renderCitationCard(item, `code-${idx}`, false))}
+                        </div>
+                      ) : (
+                        <p className="no-sub-evidence-hint">No direct source code chunks referenced.</p>
+                      )}
+                    </div>
+
+                    {/* Part 2: README & Documentation Citations */}
+                    <div className="evidence-subsection doc-subsection">
+                      <div className="evidence-group-header">
+                        <div className="evidence-group-title">
+                          <span className="evidence-group-icon">📖</span>
+                          <span className="evidence-group-name">README & Documentation Chunks</span>
+                          <span className="evidence-group-badge doc-badge">
+                            {readmeCitations.length} doc chunk{readmeCitations.length === 1 ? "" : "s"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {readmeCitations.length > 0 ? (
+                        <div className="evidence-cards-stream">
+                          {readmeCitations.map((item, idx) => renderCitationCard(item, `doc-${idx}`, true))}
+                        </div>
+                      ) : (
+                        <p className="no-sub-evidence-hint">No README or documentation chunks referenced.</p>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
 
               <p className="evidence-grounding-disclaimer">
-                Evidence is grounded in repository source code and dependency graph relationships.
+                Evidence is separated into source code implementation and repository documentation.
               </p>
             </section>
           </>

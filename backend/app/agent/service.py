@@ -45,10 +45,18 @@ class AgentService:
         }
         result = self.graph.invoke(initial_state)
 
+        evidence = result.get("evidence", [])
+        code_evidence = result.get("code_evidence", [e for e in evidence if e.get("category") == "code"])
+        readme_evidence = result.get("readme_evidence", [e for e in evidence if e.get("category") == "readme"])
+
         return {
             "question": result.get("question", query.strip()),
             "answer": result.get("answer", ""),
-            "evidence": result.get("evidence", []),
+            "evidence": evidence,
+            "code_evidence": code_evidence,
+            "readme_evidence": readme_evidence,
+            "code_chunks": result.get("code_chunks", []),
+            "readme_chunks": result.get("readme_chunks", []),
             "tools_used": result.get("tools_used", []),
             "investigation_status": result.get("investigation_status", "completed"),
             "retrieved_chunks": result.get("retrieved_chunks", []),

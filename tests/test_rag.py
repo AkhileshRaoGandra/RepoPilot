@@ -366,3 +366,49 @@ def test_api_query_and_retrieve_endpoints(monkeypatch: pytest.MonkeyPatch, retri
     # Test validation
     invalid_resp = client.post("/query", json={"query": "", "top_k": 2})
     assert invalid_resp.status_code == 422
+
+
+def test_separated_retrieval_and_evidence_categorization(
+    embedding_service: EmbeddingService,
+) -> None:
+    """Verify that Retriever separately retrieves code and documentation chunks."""
+    store = QdrantStore(collection_name="test_sep_retrieval", client=QdrantClient(path=":memory:"))
+    code_chunk = {
+        "content": "def calculate_total(items):\n    return sum(items)\n",
+        "metadata": {
+            "file": "src/calc.py",
+            "language": "Python",
+            "type": "function",
+            "name": "calculate_total",
+            "start_line": 1,
+            "end_line": 2,
+        },
+        "embedding": embedding_service.embed_query("calculate total items sum"),
+    }
+    readme_chunk = {
+        "content": "# Calculation Engine\nOverview of the total calculation module.\n",
+        "metadata": {
+            "file": "README.md",
+            "language": "Markdown",
+            "type": "documentation",
+            "name": "Calculation Engine",
+            "start_line": 1,
+            "end_line": 3,
+        },
+        "embedding": embedding_service.embed_query("calculation engine overview module"),
+    }
+    store.upsert_chunks([code_chunk, readme_chunk])
+
+    retriever = Retriever(embedding_service=embedding_service, vector_store=store)
+    sep = retriever.retrieve_separated("calculate total", top_k=2)
+    assert len(sep["code_chunks"]) >= 1
+    assert sep["code_chunks"][0]["metadata"]["file"] == "src/calc.py"
+    assert len(sep["readme_chunks"]) >= 1
+    assert sep["readme_chunks"][0]["metadata"]["file"] == "README.md"
+
+    rag = RAGService(retriever=retriever, llm_client=FakeLLMClient("Calculates total sum."))
+    result = rag.answer_question("calculate total", top_k=2)
+    assert "code_evidence" in result
+    assert "readme_evidence" in result
+    assert any(e["file"] == "src/calc.py" for e in result["code_evidence"])
+    assert any(e["file"] == "README.md" for e in result["readme_evidence"])
