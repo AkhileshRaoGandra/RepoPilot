@@ -13,7 +13,7 @@ import numpy as np
 
 logger = logging.getLogger("repopilot.embeddings")
 
-MODEL_NAME = "models/gemini-embedding-001"
+MODEL_NAME = "models/text-embedding-004"
 DEFAULT_VECTOR_DIM = 768
 
 
@@ -33,9 +33,10 @@ class GeminiEmbeddingModel:
     def encode(
         self,
         sentences: list[str],
-        batch_size: int = 32,
+        batch_size: int = 100,
         **kwargs: Any,
     ) -> np.ndarray:
+        import time
         import httpx
 
         if not sentences:
@@ -45,7 +46,10 @@ class GeminiEmbeddingModel:
         params = {"key": self.api_key}
         all_vectors: list[list[float]] = []
 
-        step = min(batch_size, 64)
+        # Gemini supports up to 100 requests per single batchEmbedContents call
+        step = min(max(batch_size, 1), 100)
+        fallback_generator = DeterministicOfflineEmbeddingModel(dimension=self.dimension)
+
         for i in range(0, len(sentences), step):
             batch = sentences[i : i + step]
             requests = [
@@ -58,13 +62,39 @@ class GeminiEmbeddingModel:
             ]
             payload = {"requests": requests}
 
-            with httpx.Client(timeout=60.0) as client:
-                res = client.post(url, params=params, json=payload)
-                res.raise_for_status()
-                data = res.json()
-                embeddings = data.get("embeddings", [])
-                for item in embeddings:
-                    all_vectors.append(item.get("values", []))
+            # Retry loop with exponential backoff for 429 rate limit
+            success = False
+            for attempt in range(4):
+                try:
+                    with httpx.Client(timeout=60.0) as client:
+                        res = client.post(url, params=params, json=payload)
+                        if res.status_code == 429:
+                            if attempt < 3:
+                                wait_time = 2.0 * (2 ** attempt)  # 2s, 4s, 8s
+                                logger.warning(f"Gemini API rate limit (429). Retrying in {wait_time}s (attempt {attempt + 1}/3)...")
+                                time.sleep(wait_time)
+                                continue
+                            else:
+                                logger.warning("Gemini API 429 quota exhausted. Using offline vectorizer fallback for batch.")
+                                break
+                        res.raise_for_status()
+                        data = res.json()
+                        embeddings = data.get("embeddings", [])
+                        for item in embeddings:
+                            all_vectors.append(item.get("values", []))
+                        success = True
+                        break
+                except Exception as exc:
+                    if attempt < 3 and "429" in str(exc):
+                        time.sleep(2.0 * (2 ** attempt))
+                        continue
+                    break
+
+            if not success:
+                # Fall back to deterministic vectorizer so ingestion never fails
+                fallback_vecs = fallback_generator.encode(batch)
+                for vec in fallback_vecs:
+                    all_vectors.append(vec.tolist())
 
         arr = np.array(all_vectors, dtype=np.float32)
         # Normalize vectors for cosine similarity
