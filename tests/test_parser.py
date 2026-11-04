@@ -137,3 +137,43 @@ int main() {
     assert chunks_txt[0]["metadata"]["language"] == "Text"
     assert chunks_txt[0]["metadata"]["type"] == "text"
 
+
+def test_cpp_ast_parsing_classes_methods_and_functions() -> None:
+    cpp_source = """#include <iostream>
+#include "calculator.h"
+
+class Calculator {
+public:
+    int add(int a, int b) {
+        return a + b;
+    }
+};
+
+int main() {
+    Calculator calc;
+    return calc.add(2, 3);
+}
+"""
+    parsed = parse_source(cpp_source, "C++")
+    assert parsed["errors"] == []
+    assert len(parsed["classes"]) == 1
+    assert parsed["classes"][0]["name"] == "Calculator"
+    assert len(parsed["methods"]) == 1
+    assert parsed["methods"][0]["name"] == "add"
+    assert parsed["methods"][0]["class_name"] == "Calculator"
+    assert len(parsed["functions"]) == 1
+    assert parsed["functions"][0]["name"] == "main"
+    assert "iostream" in parsed["imports"]
+    assert "calculator.h" in parsed["imports"]
+
+    # Verify AST chunking on C++ parsed output
+    chunks = create_chunks(cpp_source, "calculator.cpp", "C++", parsed)
+    types = [c["metadata"]["type"] for c in chunks]
+    names = [c["metadata"]["name"] for c in chunks]
+    assert "Calculator" in names
+    assert "add" in names
+    assert "main" in names
+    assert "class" in types
+    assert "method" in types
+    assert "function" in types
+

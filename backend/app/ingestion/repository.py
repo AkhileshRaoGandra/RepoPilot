@@ -325,8 +325,11 @@ def analyze_repository(
         content_str = str(file["content"])
         path_str = str(file["path"])
 
-        # 1. Parse AST and extract symbols for supported code languages
-        if language in {"Python", "JavaScript", "JavaScript (React JSX)", "TypeScript", "TypeScript (React TSX)", "Java"}:
+        # 1. Parse AST and extract symbols for supported code languages (Python, JS, TS, Java, C, C++)
+        if language in {
+            "Python", "JavaScript", "JavaScript (React JSX)", "TypeScript", "TypeScript (React TSX)",
+            "Java", "C++", "C", "C/C++ Header", "C++ Header",
+        }:
             try:
                 parsed = parse_source(content_str, language)
                 if not parsed.get("errors"):

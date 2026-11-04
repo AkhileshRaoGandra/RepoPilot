@@ -12,6 +12,11 @@ import tree_sitter_java as tsjava
 import tree_sitter_javascript as tsjavascript
 import tree_sitter_python as tspython
 
+try:
+    import tree_sitter_cpp as tscpp
+except ImportError:  # pragma: no cover
+    tscpp = None
+
 
 class ParserError(Exception):
     """Base error for source parsing."""
@@ -26,14 +31,22 @@ _LANGUAGES = {
     "javascript": tsjavascript,
     "java": tsjava,
 }
+if tscpp is not None:
+    _LANGUAGES["cpp"] = tscpp
 
 _CONTAINERS = {
     "program",
+    "translation_unit",
     "export_statement",
     "statement_block",
     "class_declaration",
+    "class_definition",
+    "class_specifier",
+    "struct_specifier",
     "class_body",
+    "field_declaration_list",
     "function_declaration",
+    "function_definition",
     "method_definition",
     "variable_declaration",
     "variable_declarator",
@@ -45,12 +58,26 @@ _CONTAINERS = {
     "method_declaration",
     "constructor_declaration",
     "block",
+    "compound_statement",
+    "namespace_definition",
+    "declaration",
 }
 
 
 def _normalise_language(language: str) -> str:
     normalised = language.lower().strip()
-    aliases = {"javascript (react jsx)": "javascript", "jsx": "javascript"}
+    aliases = {
+        "javascript (react jsx)": "javascript",
+        "jsx": "javascript",
+        "typescript": "javascript",
+        "typescript (react tsx)": "javascript",
+        "tsx": "javascript",
+        "c++": "cpp",
+        "cpp": "cpp",
+        "c": "cpp",
+        "c/c++ header": "cpp",
+        "c++ header": "cpp",
+    }
     return aliases.get(normalised, normalised)
 
 
@@ -83,7 +110,19 @@ def _text(node: Any, source_bytes: bytes) -> str:
 
 def _name(node: Any, source_bytes: bytes) -> str | None:
     name_node = node.child_by_field_name("name")
-    return _text(name_node, source_bytes) if name_node is not None else None
+    if name_node is not None:
+        return _text(name_node, source_bytes)
+    # C/C++ function definitions identify name via declarator tree
+    if node.type == "function_definition":
+        decl = node.child_by_field_name("declarator")
+        while decl is not None and decl.type in {"function_declarator", "pointer_declarator", "reference_declarator"}:
+            inner = decl.child_by_field_name("declarator")
+            if inner is None:
+                break
+            decl = inner
+        if decl is not None:
+            return _text(decl, source_bytes)
+    return None
 
 
 def _javascript_variable_function(node: Any, source_bytes: bytes) -> tuple[Any, str] | None:
@@ -203,7 +242,7 @@ def parse_source(source: str, language: str) -> dict[str, object]:
         nodes = _walk(root)
 
         for node in nodes:
-            if node.type in {"class_definition", "class_declaration"}:
+            if node.type in {"class_definition", "class_declaration", "class_specifier", "struct_specifier"}:
                 name = _name(node, source_bytes)
                 if name:
                     classes.append({
@@ -229,7 +268,7 @@ def parse_source(source: str, language: str) -> dict[str, object]:
             return best_name
 
         for node in nodes:
-            if node.type in {"class_definition", "class_declaration"}:
+            if node.type in {"class_definition", "class_declaration", "class_specifier", "struct_specifier"}:
                 continue
 
             is_function = node.type == "function_definition" or (
@@ -295,6 +334,11 @@ def parse_source(source: str, language: str) -> dict[str, object]:
             elif normalised == "java" and node.type == "import_declaration":
                 text = _text(node, source_bytes).strip().removeprefix("import ").removeprefix("static ").rstrip(";")
                 imports.append(text)
+            elif normalised == "cpp" and node.type == "preproc_include":
+                path_node = node.child_by_field_name("path")
+                if path_node is not None:
+                    inc_text = _text(path_node, source_bytes).strip('<>"')
+                    imports.append(inc_text)
 
         if root.has_error:
             for node in nodes:
