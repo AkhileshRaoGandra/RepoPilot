@@ -23,20 +23,36 @@ export const API_BASE_URL = (() => {
 
 /**
  * Check if the FastAPI backend is running and reachable.
+ * Uses an 8-second timeout to accommodate serverless (e.g. Vercel) cold starts,
+ * and tries the lightweight /health endpoint before falling back to /openapi.json.
  */
 export async function checkBackendHealth() {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000);
-    const res = await fetch(`${API_BASE_URL}/openapi.json`, {
-      method: "GET",
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-    return res.ok;
-  } catch {
-    return false;
+  const endpoints = [
+    `${API_BASE_URL}/health`,
+    `${API_BASE_URL}/openapi.json`,
+  ];
+  if (API_BASE_URL === "/api") {
+    endpoints.push("/health");
+    endpoints.push("/openapi.json");
   }
+
+  for (const endpoint of endpoints) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(endpoint, {
+        method: "GET",
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (res.ok) {
+        return true;
+      }
+    } catch {
+      // Continue to next fallback endpoint
+    }
+  }
+  return false;
 }
 
 /**

@@ -80,6 +80,12 @@ def _ensure_repository_ready(retriever_instance: object | None = None) -> None:
 api_router = APIRouter()
 
 
+@api_router.get("/health")
+def health_check() -> dict[str, str]:
+    """Lightweight health check endpoint returning 200 OK immediately for pinging and monitoring."""
+    return {"status": "ok", "app": "RepoPilot"}
+
+
 @api_router.get("/repository/status")
 def repository_status() -> dict[str, object]:
     """Return active repository indexing and vector store readiness status."""
@@ -247,6 +253,13 @@ def llm_health_check() -> dict[str, object]:
 # Include router at both root ('/') and '/api' prefix to support both direct and rewritten Vercel requests
 app.include_router(api_router)
 app.include_router(api_router, prefix="/api")
+
+
+@app.get("/health", include_in_schema=False)
+@app.get("/api/health", include_in_schema=False)
+def direct_health_check() -> dict[str, str]:
+    """Expose direct top-level health checks."""
+    return {"status": "ok", "app": "RepoPilot"}
 
 
 @app.get("/api/openapi.json", include_in_schema=False)

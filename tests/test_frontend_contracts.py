@@ -182,3 +182,10 @@ def test_repository_analyze_validation_error_format(api_client: TestClient) -> N
     assert resp.status_code == 422
     data = resp.json()
     assert "detail" in data
+
+
+def test_health_check_endpoints(api_client: TestClient) -> None:
+    """Verify that /health, /api/health, and /api/openapi.json return 200 OK."""
+    for path in ["/health", "/api/health", "/api/openapi.json"]:
+        resp = api_client.get(path)
+        assert resp.status_code == 200

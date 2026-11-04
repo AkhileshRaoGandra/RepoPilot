@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -19,7 +20,29 @@ from app.vectorstore import QdrantStore
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-REPOSITORIES_DIR = PROJECT_ROOT / "data" / "repositories"
+
+
+def _resolve_data_dir() -> Path:
+    """Resolve a writable data directory across local and serverless (e.g. Vercel) environments."""
+    if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+        tmp_dir = Path(tempfile.gettempdir()) / "repopilot" / "data"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        return tmp_dir
+    default_dir = PROJECT_ROOT / "data"
+    try:
+        default_dir.mkdir(parents=True, exist_ok=True)
+        test_file = default_dir / ".write_test"
+        test_file.touch()
+        test_file.unlink()
+        return default_dir
+    except (OSError, PermissionError):
+        tmp_dir = Path(tempfile.gettempdir()) / "repopilot" / "data"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        return tmp_dir
+
+
+DATA_DIR = _resolve_data_dir()
+REPOSITORIES_DIR = DATA_DIR / "repositories"
 
 # This object is cheap to create. It loads BGE-M3 lazily on the first embedding
 # request, then reuses that model for later repository analyses in this process.
@@ -33,7 +56,7 @@ def get_vector_store() -> QdrantStore:
     """Return the shared local Qdrant client."""
     global _vector_store
     if _vector_store is None:
-        _vector_store = QdrantStore(path=PROJECT_ROOT / "data" / "qdrant")
+        _vector_store = QdrantStore(path=DATA_DIR / "qdrant")
     return _vector_store
 
 
