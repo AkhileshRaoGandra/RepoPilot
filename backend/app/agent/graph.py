@@ -90,14 +90,62 @@ def create_agent_graph(
             "investigation_status": "searching",
         }
 
+    def _is_doc_chunk(c: dict[str, Any]) -> bool:
+        meta = c.get("metadata", {})
+        f = str(meta.get("file", "")).lower()
+        return meta.get("type") == "documentation" or "readme" in f or f.endswith((".md", ".rst", ".txt"))
+
+    def _is_code_chunk(c: dict[str, Any]) -> bool:
+        return not _is_doc_chunk(c)
+
     def repository_search(state: AgentState) -> dict[str, Any]:
-        """Node 2: Execute semantic repository retrieval using Tool 1."""
+        """Node 2: Execute semantic repository retrieval with dual README & code coverage."""
         question = state["question"]
         top_k = state.get("top_k", 5)
 
-        chunks = search_tool.search(query=question, top_k=top_k)
-        evidence = extract_evidence(chunks)
+        chunks = list(search_tool.search(query=question, top_k=top_k))
 
+        # Check for conceptual, architectural, or onboarding queries
+        question_lower = question.lower()
+        concept_keywords = {
+            "architecture", "architectural", "design", "structure", "overview",
+            "install", "installation", "setup", "run", "concept", "concepts",
+            "what does", "how does it work", "components", "stack", "readme", "entrypoint",
+        }
+        is_concept_query = any(kw in question_lower for kw in concept_keywords)
+
+        seen_citations = {
+            f"{c.get('metadata', {}).get('file')}:{c.get('metadata', {}).get('start_line')}"
+            for c in chunks
+        }
+
+        # For architectural/conceptual questions, ensure BOTH README chunks AND code chunks are retrieved
+        if is_concept_query and chunks:
+            # 1. If no README / doc chunk is present, fetch top documentation chunks
+            if not any(_is_doc_chunk(c) for c in chunks):
+                try:
+                    for dc in search_tool.search(query=f"README overview architecture installation {question}", top_k=2):
+                        if _is_doc_chunk(dc):
+                            cit = f"{dc.get('metadata', {}).get('file')}:{dc.get('metadata', {}).get('start_line')}"
+                            if cit not in seen_citations:
+                                seen_citations.add(cit)
+                                chunks.append(dc)
+                except Exception:
+                    pass
+
+            # 2. If no implementation code chunk is present, fetch core code chunks
+            if not any(_is_code_chunk(c) for c in chunks):
+                try:
+                    for cc in search_tool.search(query=f"main app server service entrypoint {question}", top_k=2):
+                        if _is_code_chunk(cc):
+                            cit = f"{cc.get('metadata', {}).get('file')}:{cc.get('metadata', {}).get('start_line')}"
+                            if cit not in seen_citations:
+                                seen_citations.add(cit)
+                                chunks.append(cc)
+                except Exception:
+                    pass
+
+        evidence = extract_evidence(chunks)
         tools_used = [*state.get("tools_used", []), "semantic_search"]
         return {
             "retrieved_chunks": chunks,
@@ -128,12 +176,17 @@ def create_agent_graph(
             needs_graph = True
 
         # Check for source inspection intent
-        inspect_keywords = {"inspect", "full", "surrounding", "lines", "detail", "complete", "around"}
+        inspect_keywords = {"inspect", "full", "surrounding", "lines", "detail", "complete", "around", "architecture", "structure"}
         has_inspect_intent = any(kw in question_lower for kw in inspect_keywords)
         is_partial_chunk = bool(chunks[0].get("metadata", {}).get("part"))
 
         if (has_inspect_intent or is_partial_chunk) and state.get("iteration", 0) == 0:
-            top_metadata = chunks[0].get("metadata", {})
+            # If top chunk is documentation, prioritize inspecting the first accompanying code chunk
+            doc_chunk = next((c for c in chunks if _is_doc_chunk(c)), None)
+            code_chunk = next((c for c in chunks if _is_code_chunk(c)), None)
+            target_chunk = code_chunk if (doc_chunk and code_chunk and _is_doc_chunk(chunks[0])) else chunks[0]
+
+            top_metadata = target_chunk.get("metadata", {})
             file_path = top_metadata.get("file")
             start_line = top_metadata.get("start_line")
             end_line = top_metadata.get("end_line")

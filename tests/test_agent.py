@@ -286,3 +286,59 @@ def test_api_agent_query_endpoint(
     # Validation test
     err_resp = client.post("/agent/query", json={"query": "", "top_k": 2})
     assert err_resp.status_code == 422
+
+
+# 8. Dual README and Code Retrieval for Architectural / Conceptual Queries
+def test_agent_retrieves_both_readme_and_code_chunks_for_architecture_query(
+    inspection_tool: SourceInspectionTool,
+) -> None:
+    readme_chunk = {
+        "content": "## Architecture\nThe system uses FastAPI and React.\n",
+        "metadata": {
+            "file": "README.md",
+            "language": "Markdown",
+            "type": "documentation",
+            "name": "Architecture",
+            "start_line": 1,
+            "end_line": 5,
+        },
+        "embedding": [0.8, 0.2, 0.0],
+    }
+    code_chunk = {
+        "content": "app = FastAPI(title='RepoPilot')\n",
+        "metadata": {
+            "file": "app/main.py",
+            "language": "Python",
+            "type": "module",
+            "name": "main",
+            "start_line": 1,
+            "end_line": 10,
+        },
+        "embedding": [0.2, 0.8, 0.0],
+    }
+
+    store = QdrantStore(collection_name="test_arch_dual", client=QdrantClient(path=":memory:"))
+    store.upsert_chunks([readme_chunk, code_chunk])
+
+    fake_retriever = Retriever(embedding_service=None, vector_store=store)  # type: ignore[arg-type]
+    fake_retriever.retrieve = lambda query, top_k=5: [readme_chunk, code_chunk]  # type: ignore[assignment]
+
+    fake_llm = FakeLLMClient(responses="The architecture consists of a FastAPI backend documented in README.md.")
+    agent = AgentService(
+        retriever=fake_retriever,
+        inspection_tool=inspection_tool,
+        llm_client=fake_llm,
+    )
+
+    result = agent.run_investigation("what is the architecture of this project?", top_k=2)
+
+    # Verify both README and code file are retrieved and cited as evidence
+    files_in_evidence = {e["file"] for e in result["evidence"]}
+    assert "README.md" in files_in_evidence
+    assert "app/main.py" in files_in_evidence
+
+    # Verify prompt provided to LLM received both blocks
+    llm_prompt = fake_llm.calls[0]["user_prompt"]
+    assert "README.md" in llm_prompt
+    assert "app/main.py" in llm_prompt
+
