@@ -244,7 +244,37 @@ function FileBadge({ filepath }) {
   );
 }
 
-export default function App() {
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, info) {
+    console.error("UI rendering error caught by ErrorBoundary:", error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: "40px", color: "#f87171", background: "#0b0f19", minHeight: "100vh", fontFamily: "sans-serif" }}>
+          <h2>Application Rendering Error</h2>
+          <p>{this.state.error?.message || "An unexpected error occurred."}</p>
+          <button
+            onClick={() => window.location.reload()}
+            style={{ padding: "8px 16px", marginTop: "12px", background: "#3b82f6", color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}
+          >
+            Reload Application
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function MainApp() {
   // Backend health status
   const [backendOnline, setBackendOnline] = useState(null);
 
@@ -715,15 +745,9 @@ export default function App() {
             <div className="processing-feedback-card">
               <div className="feedback-spinner-orbit" />
               <div className="feedback-text-group">
-                <strong>
-                  {queryMode === "agent"
-                    ? "LangGraph Agent Executing Investigation Plan"
-                    : "Semantic Code Retrieval & Grounded Generation"}
-                </strong>
+                <strong>LangGraph Agent Executing Investigation Plan</strong>
                 <p>
-                  {queryMode === "agent"
-                    ? "Executing dynamic tool calls across semantic vector space, repository graph nodes, and source AST code inspection."
-                    : "Embedding question with BGE-M3, fetching top cosine similarity matches from Qdrant, and synthesizing grounded answer."}
+                  Executing dynamic tool calls across semantic vector space, repository graph nodes, and source AST code inspection.
                 </p>
               </div>
             </div>
@@ -804,8 +828,8 @@ export default function App() {
               </div>
             </section>
 
-            {/* Agent Investigation Pipeline (if in Agent Mode) */}
-            {queryMode === "agent" && queryResult.tools_used && queryResult.tools_used.length > 0 && (
+            {/* Agent Investigation Pipeline */}
+            {queryResult.tools_used && queryResult.tools_used.length > 0 && (
               <div className="agent-investigation-accordion">
                 <div
                   className="accordion-header-row"
@@ -1025,5 +1049,13 @@ export default function App() {
         </div>
       </footer>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <MainApp />
+    </ErrorBoundary>
   );
 }
