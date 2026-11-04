@@ -77,10 +77,16 @@ SUPPORTED_EXTENSIONS = {
     ".java": "Java",
     ".cpp": "C++",
     ".c": "C",
+    ".cc": "C++",
+    ".cxx": "C++",
     ".h": "C/C++ Header",
     ".hpp": "C++ Header",
+    ".hh": "C++ Header",
     ".md": "Markdown",
+    ".markdown": "Markdown",
+    ".rst": "Markdown",
     ".json": "JSON",
+    ".txt": "Text",
     ".yml": "YAML",
     ".yaml": "YAML",
 }
@@ -180,12 +186,19 @@ def is_sensitive_file(path: Path) -> bool:
 
 
 def is_supported_file(path: Path) -> bool:
-    if path.name.lower() in IGNORED_FILE_NAMES:
+    name = path.name.lower()
+    if name in IGNORED_FILE_NAMES or is_sensitive_file(path):
         return False
-    return path.suffix.lower() in SUPPORTED_EXTENSIONS and not is_sensitive_file(path)
+    # Explicitly support documentation files (e.g. README without extension or LICENSE)
+    if name in {"readme", "license", "contributing", "architecture"}:
+        return True
+    return path.suffix.lower() in SUPPORTED_EXTENSIONS
 
 
 def detect_language(path: Path) -> str:
+    name = path.name.lower()
+    if name in {"readme", "readme.md", "readme.markdown", "readme.rst", "readme.txt"}:
+        return "Markdown"
     return SUPPORTED_EXTENSIONS.get(path.suffix.lower(), "Unknown")
 
 
@@ -300,8 +313,8 @@ def analyze_repository(
     if not files:
         raise UnsupportedFilesError("Repository contains no supported readable files.")
 
-    _report(40, f"Discovered {len(files)} files. Parsing AST syntax trees...")
-    documentation_extensions = {".md"}
+    _report(40, f"Discovered {len(files)} files. Parsing AST syntax trees and chunking content...")
+    documentation_extensions = {".md", ".markdown", ".rst", ".txt"}
     documentation_files = sum(file["extension"] in documentation_extensions for file in files)
     chunks: list[dict[str, object]] = []
     parsing_failures: list[dict[str, str]] = []
@@ -309,32 +322,42 @@ def analyze_repository(
     parsed_results: dict[str, dict[str, object]] = {}
     for file in files:
         language = str(file["language"])
-        if language not in {"Python", "JavaScript", "JavaScript (React JSX)", "Java"}:
-            continue
+        content_str = str(file["content"])
+        path_str = str(file["path"])
+
+        # 1. Parse AST and extract symbols for supported code languages
+        if language in {"Python", "JavaScript", "JavaScript (React JSX)", "TypeScript", "TypeScript (React TSX)", "Java"}:
+            try:
+                parsed = parse_source(content_str, language)
+                if not parsed.get("errors"):
+                    parsed_files += 1
+                    parsed_results[path_str] = parsed
+                    chunks.extend(create_chunks(content_str, path_str, language, parsed))
+                    continue
+                else:
+                    parsing_failures.append({"path": path_str, "reason": "parse error"})
+            except Exception as error:  # A parser failure must not stop repository ingestion.
+                parsing_failures.append({"path": path_str, "reason": str(error)})
+
+        # 2. Chunk Markdown (including README.md), C++, C, JSON, Text, YAML, etc.
         try:
-            parsed = parse_source(str(file["content"]), language)
-            if parsed["errors"]:
-                parsing_failures.append({"path": str(file["path"]), "reason": "parse error"})
-                continue
-            parsed_files += 1
-            parsed_results[str(file["path"])] = parsed
-            chunks.extend(create_chunks(str(file["content"]), str(file["path"]), language, parsed))
-        except Exception as error:  # A parser failure must not stop repository ingestion.
-            parsing_failures.append({"path": str(file["path"]), "reason": str(error)})
+            chunks.extend(create_chunks(content_str, path_str, language, {"classes": [], "functions": [], "methods": [], "errors": []}))
+        except Exception as error:
+            parsing_failures.append({"path": path_str, "reason": str(error)})
 
     # Build the dependency graph from parsed AST data
     _report(60, f"Building dependency relationship graph ({parsed_files} parsed files)...")
     print(f"[Ingestion] Building dependency graph for {len(files)} files...")
     _dependency_graph = build_graph(files, parsed_results)
 
-    # Cap chunks to prevent CPU embedding from taking 10+ minutes on large repos
+    # Cap chunks to keep embedding fast and memory usage minimal
     total_chunks_created = len(chunks)
     if total_chunks_created > MAX_CHUNKS_PER_REPO:
-        print(f"[Ingestion] Capping chunks from {total_chunks_created} to {MAX_CHUNKS_PER_REPO} to keep embedding fast (<30s).")
+        print(f"[Ingestion] Capping chunks from {total_chunks_created} to {MAX_CHUNKS_PER_REPO} to keep embedding fast.")
         chunks = chunks[:MAX_CHUNKS_PER_REPO]
 
-    _report(75, f"Generating BGE-M3 vector embeddings for {len(chunks)} code chunks...")
-    print(f"[Ingestion] Embedding {len(chunks)} code chunks with BGE-M3...")
+    _report(75, f"Generating vector embeddings for {len(chunks)} chunks...")
+    print(f"[Ingestion] Embedding {len(chunks)} chunks with embedding service...")
     embedded_chunks = embedding_service.embed_chunks(chunks)
 
     # Reset collection so the vector store is clean and isolated for this repository

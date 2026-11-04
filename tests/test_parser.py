@@ -89,3 +89,51 @@ def test_chunk_metadata_and_large_symbol_splitting() -> None:
 def test_unsupported_language_is_explicit() -> None:
     with pytest.raises(UnsupportedLanguageError):
         parse_source("package main", "Go")
+
+
+def test_markdown_and_readme_chunking() -> None:
+    readme_content = """# RepoPilot
+An AI onboarding assistant.
+
+## Architecture
+The system contains a FastAPI backend and a React frontend.
+
+## Installation
+Run pip install -r requirements.txt
+"""
+    chunks = create_chunks(readme_content, "README.md", "Markdown", {})
+    assert len(chunks) >= 3
+    section_names = [c["metadata"]["name"] for c in chunks]
+    assert "RepoPilot" in section_names
+    assert "Architecture" in section_names
+    assert "Installation" in section_names
+    for c in chunks:
+        assert c["metadata"]["language"] == "Markdown"
+        assert c["metadata"]["type"] == "documentation"
+        assert c["metadata"]["file"] == "README.md"
+
+
+def test_cpp_json_txt_chunking() -> None:
+    cpp_source = """#include <iostream>
+int main() {
+    std::cout << "Hello C++" << std::endl;
+    return 0;
+}
+"""
+    chunks_cpp = create_chunks(cpp_source, "main.cpp", "C++", {})
+    assert len(chunks_cpp) >= 1
+    assert chunks_cpp[0]["metadata"]["language"] == "C++"
+    assert chunks_cpp[0]["metadata"]["type"] == "module"
+
+    json_source = '{"name": "repopilot", "version": "1.0.0"}'
+    chunks_json = create_chunks(json_source, "package.json", "JSON", {})
+    assert len(chunks_json) >= 1
+    assert chunks_json[0]["metadata"]["language"] == "JSON"
+    assert chunks_json[0]["metadata"]["type"] == "config"
+
+    txt_source = "System requirements:\n- Python 3.12+\n- Node.js 20+\n"
+    chunks_txt = create_chunks(txt_source, "requirements.txt", "Text", {})
+    assert len(chunks_txt) >= 1
+    assert chunks_txt[0]["metadata"]["language"] == "Text"
+    assert chunks_txt[0]["metadata"]["type"] == "text"
+

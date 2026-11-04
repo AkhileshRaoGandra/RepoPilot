@@ -210,8 +210,16 @@ const EXT_COLOR_MAP = {
   JS: { bg: "rgba(234, 179, 8, 0.15)", text: "#facc15", border: "rgba(234, 179, 8, 0.3)" },
   TS: { bg: "rgba(14, 165, 233, 0.15)", text: "#38bdf8", border: "rgba(14, 165, 233, 0.3)" },
   JAVA: { bg: "rgba(239, 68, 68, 0.15)", text: "#f87171", border: "rgba(239, 68, 68, 0.3)" },
-  GO: { bg: "rgba(20, 184, 166, 0.15)", text: "#2dd4bf", border: "rgba(20, 184, 166, 0.3)" },
+  CPP: { bg: "rgba(236, 72, 153, 0.15)", text: "#f472b6", border: "rgba(236, 72, 153, 0.3)" },
+  C: { bg: "rgba(236, 72, 153, 0.15)", text: "#f472b6", border: "rgba(236, 72, 153, 0.3)" },
+  H: { bg: "rgba(236, 72, 153, 0.15)", text: "#f472b6", border: "rgba(236, 72, 153, 0.3)" },
+  HPP: { bg: "rgba(236, 72, 153, 0.15)", text: "#f472b6", border: "rgba(236, 72, 153, 0.3)" },
   JSON: { bg: "rgba(168, 85, 247, 0.15)", text: "#c084fc", border: "rgba(168, 85, 247, 0.3)" },
+  TXT: { bg: "rgba(161, 161, 170, 0.15)", text: "#e4e4e7", border: "rgba(161, 161, 170, 0.3)" },
+  MD: { bg: "rgba(16, 185, 129, 0.15)", text: "#34d399", border: "rgba(16, 185, 129, 0.3)" },
+  YAML: { bg: "rgba(245, 158, 11, 0.15)", text: "#fbbf24", border: "rgba(245, 158, 11, 0.3)" },
+  YML: { bg: "rgba(245, 158, 11, 0.15)", text: "#fbbf24", border: "rgba(245, 158, 11, 0.3)" },
+  GO: { bg: "rgba(20, 184, 166, 0.15)", text: "#2dd4bf", border: "rgba(20, 184, 166, 0.3)" },
 };
 
 function FileBadge({ filepath }) {
@@ -247,10 +255,7 @@ export default function App() {
   const [analyzeError, setAnalyzeError] = useState("");
   const [indexedRepo, setIndexedRepo] = useState(null);
 
-  // Step 2: Query Mode State
-  const [queryMode, setQueryMode] = useState("rag"); // "rag" | "agent"
-
-  // Step 3: Question & Query State
+  // Question & Query State
   const [question, setQuestion] = useState("How does authentication work?");
   const [queryLoading, setQueryLoading] = useState(false);
   const [queryError, setQueryError] = useState("");
@@ -317,7 +322,7 @@ export default function App() {
     // Validation 1: Require repository ingestion first
     if (!indexedRepo) {
       setQueryError(
-        "Please ingest a repository first! Enter a GitHub repository URL in Step 1 and click 'Analyze' before asking questions."
+        "Please ingest a repository first! Enter a GitHub repository URL above and click 'Analyze' before asking questions."
       );
       const repoInput = document.getElementById("github-repo-input");
       if (repoInput) {
@@ -340,12 +345,7 @@ export default function App() {
     setExpandAllExcerpts(false);
 
     try {
-      let data;
-      if (queryMode === "agent") {
-        data = await queryAgent(trimmed, 5);
-      } else {
-        data = await queryRAG(trimmed, 5);
-      }
+      const data = await queryAgent(trimmed, 5);
       setQueryResult(data);
     } catch (err) {
       const msg = (err && err.message) || "";
@@ -356,7 +356,7 @@ export default function App() {
         msg.toLowerCase().includes("collection")
       ) {
         setQueryError(
-          "Please ingest a repository first. No indexed repository is currently active on the server. Analyze a repository in Step 1 to index the codebase."
+          "Please ingest a repository first. No indexed repository is currently active on the server. Analyze a repository above to index the codebase."
         );
       } else {
         setQueryError(err.message || "Failed to execute query.");
@@ -436,13 +436,18 @@ export default function App() {
         </header>
 
         {/* ====================================================================
-            STEP 1: ANALYZE REPOSITORY
+            ANALYZE REPOSITORY
             ==================================================================== */}
-        <section className="structural-step-container" aria-labelledby="step-1-title">
+        <section className="structural-step-container" aria-labelledby="step-analyze-title">
           <div className="step-title-row">
             <div className="step-number-title">
-              <span className="step-index-badge">1</span>
-              <h2 id="step-1-title" className="step-heading">Analyze repository</h2>
+              <div className="step-icon-badge">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
+                  <path d="M9 18c-4.51 2-5-2-7-2" />
+                </svg>
+              </div>
+              <h2 id="step-analyze-title" className="step-heading">Analyze repository</h2>
             </div>
             {indexedRepo && (
               <span className="step-status-chip ready">
@@ -603,103 +608,19 @@ export default function App() {
         </section>
 
         {/* ====================================================================
-            STEP 2: CHOOSE A QUERY MODE
+            ASK A QUESTION (LANGGRAPH AGENT)
             ==================================================================== */}
-        <section className="structural-step-container" aria-labelledby="step-2-title">
+        <section className="structural-step-container" aria-labelledby="step-query-title">
           <div className="step-title-row">
             <div className="step-number-title">
-              <span className="step-index-badge">2</span>
-              <h2 id="step-2-title" className="step-heading">Choose a query mode</h2>
-            </div>
-            <span className="active-mode-tag">
-              Selected: <strong>{queryMode === "rag" ? "RAG Mode" : "Agent Mode"}</strong>
-            </span>
-          </div>
-
-          <div className="query-mode-selection-grid">
-            {/* RAG Mode Card */}
-            <div
-              className={`mode-card ${queryMode === "rag" ? "is-selected" : ""}`}
-              onClick={() => setQueryMode("rag")}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setQueryMode("rag"); }}
-              aria-pressed={queryMode === "rag"}
-            >
-              <div className="mode-card-top">
-                <div className="mode-icon-container rag-icon">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="11" cy="11" r="8" />
-                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                  </svg>
-                </div>
-                <span className="mode-pill-badge fast">FAST RETRIEVAL</span>
+              <div className="step-icon-badge accent">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
               </div>
-
-              <div className="mode-text-content">
-                <h3 className="mode-card-title">RAG Mode</h3>
-                <p className="mode-card-description">
-                  Retrieve relevant code chunks via dense BGE-M3 vector search in Qdrant and answer directly with grounded evidence.
-                </p>
-              </div>
-
-              <div className="mode-card-bottom">
-                <div className="mode-features-list">
-                  <span>• Single-hop vector search</span>
-                  <span>• Grounded code excerpts</span>
-                </div>
-                <div className={`mode-selection-radio ${queryMode === "rag" ? "checked" : ""}`} />
-              </div>
-            </div>
-
-            {/* Agent Mode Card */}
-            <div
-              className={`mode-card ${queryMode === "agent" ? "is-selected" : ""}`}
-              onClick={() => setQueryMode("agent")}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setQueryMode("agent"); }}
-              aria-pressed={queryMode === "agent"}
-            >
-              <div className="mode-card-top">
-                <div className="mode-icon-container agent-icon">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="18" cy="18" r="3" />
-                    <circle cx="6" cy="6" r="3" />
-                    <circle cx="18" cy="6" r="3" />
-                    <path d="M6 9v12" />
-                    <path d="M18 9a9 9 0 0 1-9 9" />
-                  </svg>
-                </div>
-                <span className="mode-pill-badge agent">LANGGRAPH AGENT</span>
-              </div>
-
-              <div className="mode-text-content">
-                <h3 className="mode-card-title">Agent Mode</h3>
-                <p className="mode-card-description">
-                  Autonomous multi-step investigation using LangGraph, semantic search, Tree-sitter source inspection, and repository dependency graphs.
-                </p>
-              </div>
-
-              <div className="mode-card-bottom">
-                <div className="mode-features-list">
-                  <span>• Multi-hop graph traversal</span>
-                  <span>• Autonomous tool loop</span>
-                </div>
-                <div className={`mode-selection-radio ${queryMode === "agent" ? "checked" : ""}`} />
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* ====================================================================
-            STEP 3: ASK A QUESTION
-            ==================================================================== */}
-        <section className="structural-step-container" aria-labelledby="step-3-title">
-          <div className="step-title-row">
-            <div className="step-number-title">
-              <span className="step-index-badge">3</span>
-              <h2 id="step-3-title" className="step-heading">Ask a question</h2>
+              <h2 id="step-query-title" className="step-heading">Ask a question</h2>
             </div>
             <div className="step-header-meta-group">
               {!indexedRepo ? (
@@ -712,7 +633,7 @@ export default function App() {
                 </span>
               )}
               <span className="step-route-hint">
-                Route: <code>{queryMode === "agent" ? "/agent/query" : "/query"}</code>
+                Autonomous Agent · LangGraph
               </span>
             </div>
           </div>
@@ -727,7 +648,7 @@ export default function App() {
                 className="step-text-input"
                 placeholder={
                   !indexedRepo
-                    ? "Please ingest a repository in Step 1 first..."
+                    ? "Please ingest a repository above first..."
                     : "Ask anything about the codebase (e.g. How does authentication work?)"
                 }
                 value={question}

@@ -26,6 +26,10 @@ def test_invalid_github_repository_url() -> None:
 def test_language_detection() -> None:
     assert detect_language(Path("component.tsx")) == "TypeScript (React TSX)"
     assert detect_language(Path("notes.md")) == "Markdown"
+    assert detect_language(Path("README")) == "Markdown"
+    assert detect_language(Path("main.cpp")) == "C++"
+    assert detect_language(Path("config.json")) == "JSON"
+    assert detect_language(Path("info.txt")) == "Text"
     assert detect_language(Path("image.png")) == "Unknown"
 
 
@@ -35,7 +39,7 @@ def test_file_filtering_ignored_directories_and_metadata(tmp_path: Path) -> None
     (tmp_path / "src" / "main.py").write_text("print('hello')\n", encoding="utf-8")
     (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
     (tmp_path / ".env").write_text("TOKEN=secret", encoding="utf-8")
-    (tmp_path / "notes.txt").write_text("ignored", encoding="utf-8")
+    (tmp_path / "notes.bin").write_text("ignored", encoding="utf-8")
     (tmp_path / "node_modules" / "package.js").write_text("ignored", encoding="utf-8")
 
     files, unreadable, has_files = scan_repository(tmp_path)

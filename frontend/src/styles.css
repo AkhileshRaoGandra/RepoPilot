@@ -232,18 +232,27 @@ button, input, select, textarea {
   gap: 8px;
 }
 
-.step-index-badge {
-  font-size: 11.5px;
-  font-weight: 700;
-  color: #ffffff;
-  background: #23232c;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
+.step-icon-badge {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  color: #818cf8;
+  flex-shrink: 0;
+}
+
+.step-icon-badge.accent {
+  background: rgba(168, 85, 247, 0.12);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  color: #c084fc;
+}
+
+.step-index-badge {
+  display: none;
 }
 
 .step-heading {
