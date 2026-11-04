@@ -1,21 +1,109 @@
-"""Generate BGE-M3 embeddings for code-aware chunks."""
+"""Generate embeddings for code-aware chunks using Gemini or deterministic offline vectorizer."""
 
 from __future__ import annotations
 
+import hashlib
+import logging
+import os
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from typing import Any
 
+import numpy as np
 
-MODEL_NAME = "BAAI/bge-m3"
+logger = logging.getLogger("repopilot.embeddings")
+
+MODEL_NAME = "models/gemini-embedding-001"
+DEFAULT_VECTOR_DIM = 768
+
+
+class GeminiEmbeddingModel:
+    """Lightweight REST embedding client using Google Gemini batchEmbedContents API."""
+
+    def __init__(
+        self,
+        api_key: str,
+        model_name: str = MODEL_NAME,
+        dimension: int = DEFAULT_VECTOR_DIM,
+    ) -> None:
+        self.api_key = api_key
+        self.model_name = model_name
+        self.dimension = dimension
+
+    def encode(
+        self,
+        sentences: list[str],
+        batch_size: int = 32,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        import httpx
+
+        if not sentences:
+            return np.empty((0, self.dimension), dtype=np.float32)
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/{self.model_name}:batchEmbedContents"
+        params = {"key": self.api_key}
+        all_vectors: list[list[float]] = []
+
+        step = min(batch_size, 64)
+        for i in range(0, len(sentences), step):
+            batch = sentences[i : i + step]
+            requests = [
+                {
+                    "model": self.model_name,
+                    "content": {"parts": [{"text": text}]},
+                    "outputDimensionality": self.dimension,
+                }
+                for text in batch
+            ]
+            payload = {"requests": requests}
+
+            with httpx.Client(timeout=60.0) as client:
+                res = client.post(url, params=params, json=payload)
+                res.raise_for_status()
+                data = res.json()
+                embeddings = data.get("embeddings", [])
+                for item in embeddings:
+                    all_vectors.append(item.get("values", []))
+
+        arr = np.array(all_vectors, dtype=np.float32)
+        # Normalize vectors for cosine similarity
+        norms = np.linalg.norm(arr, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        return arr / norms
+
+
+class DeterministicOfflineEmbeddingModel:
+    """Fast, deterministic offline embedding generator (zero ML / network dependencies).
+
+    Used for unit testing and offline environments when no GEMINI_API_KEY is configured.
+    Generates 768-dimensional normalized vectors deterministically from text tokens.
+    """
+
+    def __init__(self, dimension: int = DEFAULT_VECTOR_DIM) -> None:
+        self.dimension = dimension
+
+    def encode(self, sentences: list[str], **kwargs: Any) -> np.ndarray:
+        vectors: list[np.ndarray] = []
+        for s in sentences:
+            vec = np.zeros(self.dimension, dtype=np.float32)
+            words = s.lower().split()
+            if not words:
+                words = ["empty"]
+            for word in words:
+                h = int(hashlib.md5(word.encode("utf-8")).hexdigest(), 16)
+                slot = h % self.dimension
+                val = ((h >> 16) % 1000) / 500.0 - 1.0
+                vec[slot] += val
+            norm = np.linalg.norm(vec)
+            if norm > 0:
+                vec = vec / norm
+            vectors.append(vec)
+        return np.array(vectors, dtype=np.float32)
 
 
 class EmbeddingService:
-    """Lazily load BGE-M3 and embed Day 2 chunks in batches.
-
-    A service instance caches its model, so callers should create one instance per
-    application process rather than creating one per chunk or request.
-    """
+    """Generate dense embeddings for code-aware chunks in batches."""
 
     def __init__(
         self,
@@ -32,26 +120,20 @@ class EmbeddingService:
 
     @staticmethod
     def _default_model_factory(model_name: str) -> Any:
-        """Import lazily so code paths that do not embed need no model startup."""
-        import os
+        """Create active embedding model: Gemini API if key present, else offline generator."""
+        gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if gemini_key:
+            return GeminiEmbeddingModel(api_key=gemini_key, dimension=DEFAULT_VECTOR_DIM)
+
+        # Fallback to SentenceTransformer if user explicitly installed it locally
         try:
             from sentence_transformers import SentenceTransformer
-        except ImportError as error:
-            raise RuntimeError(
-                "sentence-transformers is required for embeddings. "
-                "Install backend/requirements.txt first."
-            ) from error
-        token = os.getenv("HF_TOKEN") or False
-        try:
-            from huggingface_hub import snapshot_download
-
-            local_path = snapshot_download(model_name, local_files_only=True)
-            model = SentenceTransformer(local_path, token=token)
+            token = os.getenv("HF_TOKEN") or False
+            return SentenceTransformer("BAAI/bge-m3", token=token)
         except Exception:
-            model = SentenceTransformer(model_name, token=token)
-        model.max_seq_length = 1024
-        return model
+            pass
 
+        return DeterministicOfflineEmbeddingModel(dimension=DEFAULT_VECTOR_DIM)
 
     @property
     def model(self) -> Any:
@@ -85,11 +167,7 @@ class EmbeddingService:
         return content, metadata
 
     def embed_chunks(self, chunks: Sequence[Mapping[str, Any]]) -> list[dict[str, object]]:
-        """Return chunks with normalized dense embeddings and preserved metadata.
-
-        An empty collection needs no model call and returns an empty collection.
-        Invalid individual chunks raise ``ValueError`` before embedding begins.
-        """
+        """Return chunks with normalized dense embeddings and preserved metadata."""
         if not chunks:
             return []
 
@@ -112,7 +190,7 @@ class EmbeddingService:
                 {
                     "content": content,
                     "metadata": deepcopy(dict(metadata)),
-                    "embedding": vector.tolist(),
+                    "embedding": vector.tolist() if hasattr(vector, "tolist") else list(vector),
                 }
             )
         return embedded_chunks
@@ -128,5 +206,5 @@ class EmbeddingService:
             normalize_embeddings=True,
             show_progress_bar=False,
         )
-        return [float(value) for value in vectors[0]]
-
+        first_vector = vectors[0]
+        return [float(value) for value in (first_vector.tolist() if hasattr(first_vector, "tolist") else first_vector)]

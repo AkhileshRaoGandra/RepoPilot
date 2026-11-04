@@ -11,25 +11,14 @@ dependencies = [
     "tree-sitter-python>=0.23,<1.0",
     "tree-sitter-javascript>=0.23,<1.0",
     "tree-sitter-java>=0.23,<1.0",
-    "torch",
-    "sentence-transformers>=3.0,<4.0",
     "qdrant-client>=1.12,<2.0",
     "pywin32>=312; sys_platform == 'win32'",
     "langgraph>=0.2,<2.0",
     "networkx>=3.0,<4.0",
     "python-dotenv>=1.0.0",
+    "httpx>=0.27.0",
+    "numpy>=1.26.0,<3.0",
 ]
 
 [tool.vercel]
 entrypoint = "main:app"
-
-[tool.uv]
-index-strategy = "unsafe-best-match"
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[tool.uv.sources]
-torch = { index = "pytorch-cpu" }
